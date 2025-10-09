@@ -5,7 +5,7 @@ SET PATH=C:/Program Files/OpenModelica1.25.4-64bit/bin/;C:/Program Files/OpenMod
 
 SET ERRORLEVEL=
 
-CALL .\Landing.exe -rt=1.0
+CALL .\Landing.exe -rt=1.0 > Landing.out.txt
 
 SET RESULT=%ERRORLEVEL%
 

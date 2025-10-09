@@ -32,7 +32,7 @@ namespace First
         private readonly object telemetryLock = new object();
 
         private List<Vector3> trajectoryHistory;
-        private const int MAX_TRAJECTORY_POINTS = 500;
+        private const int MAX_TRAJECTORY_POINTS = 5000;
 
         private int rocketVAO, rocketVBO, rocketEBO;
         private int groundVAO, groundVBO;
@@ -45,7 +45,7 @@ namespace First
 
         private Matrix4 rocketModelMatrix;
         private DateTime lastFrameTime;
-        private double targetFrameTime = 1.0 / 30.0; // 30 FPS
+        private double targetFrameTime = 1.0 / 20.0; // 20 FPS
 
         public RocketVisualizationWindow() : base(GameWindowSettings.Default, new NativeWindowSettings() { ClientSize = (1000, 800), Title = "SpaceXaXa" })
         {
@@ -57,8 +57,8 @@ namespace First
         {
             base.OnLoad();
 
-            GL.ClearColor(0.1f, 0.2f, 0.2f, 1.0f);
-            GL.Enable(EnableCap.DepthTest);
+            GL.ClearColor(0.1f, 0.1f, 0.2f, 0.5f);
+            //GL.Enable(EnableCap.DepthTest);
             GL.Enable(EnableCap.Blend);
             GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
 
@@ -90,66 +90,6 @@ namespace First
             lastFrameTime = DateTime.Now;
         }
 
-        /*
-        private void InitializeCameras()
-        {
-            cameras = new List<Camera>
-            {
-                // Side view
-                new Camera(new Vector3(50, 20, 0), Vector3.Zero),
-                // Rocket view (from rocket looking down)
-                new Camera(new Vector3(0, 15, 0), Vector3.Zero),
-                // Diagonal view
-                new Camera(new Vector3(30, 30, 30), Vector3.Zero),
-                // Top-down view
-                new Camera(new Vector3(0, 50, 1), Vector3.Zero),
-                // UDP-controlled camera (rotates around landing point)
-                new Camera(new Vector3(30, 20, 0), Vector3.Zero)
-            };
-
-            foreach (var camera in cameras)
-            {
-                camera.AspectRatio = FloatAspectRatio; // Width / Height;
-            }
-        }
-
-        private void OnCameraControlReceived(CameraControl control)
-        {
-            lock (telemetryLock)
-            {
-                udpCameraAngle = control.Angle;
-                udpCameraZoom = control.Zoom;
-                udpCameraElevation = control.Elevation;
-            }
-        }
-
-        private void UpdateUDPCamera()
-        {
-            // Smooth camera transitions
-            smoothCameraAngle = MathHelper.Lerp(smoothCameraAngle, udpCameraAngle, CAMERA_SMOOTH_FACTOR);
-            smoothCameraZoom = MathHelper.Lerp(smoothCameraZoom, udpCameraZoom, CAMERA_SMOOTH_FACTOR);
-            smoothCameraElevation = MathHelper.Lerp(smoothCameraElevation, udpCameraElevation, CAMERA_SMOOTH_FACTOR);
-
-            // Calculate camera position based on angle and zoom
-            // Angle is from north (positive Z axis), rotating clockwise when viewed from above
-            float baseDistance = 30.0f / smoothCameraZoom; // Base distance modified by zoom
-            float height = baseDistance * (float)Math.Sin(smoothCameraElevation);
-            float horizontalDistance = baseDistance * (float)Math.Cos(smoothCameraElevation);
-
-            // Convert angle from north to standard math angle (from east)
-            // North = 0, East = π/2, South = π, West = 3π/2
-            float mathAngle = MathHelper.PiOver2 - smoothCameraAngle;
-
-            float x = horizontalDistance * (float)Math.Cos(mathAngle);
-            float z = horizontalDistance * (float)Math.Sin(mathAngle);
-
-            // Update UDP-controlled camera (index 4)
-            cameras[4].Position = new Vector3(x, height, z);
-            cameras[4].Target = Vector3.Zero; // Always look at landing point
-            cameras[4].FOV = MathHelper.PiOver4 / (float)Math.Sqrt(smoothCameraZoom); // Adjust FOV with zoom
-        }
-        */
-
         private void OnTelemetryReceived(RocketTelemetry telemetry)
         {
             lock (telemetryLock)
@@ -161,7 +101,7 @@ namespace First
                 {
                     trajectoryHistory.RemoveAt(0);
                 }
-                trajectoryHistory.Add(telemetry.Position);
+                //trajectoryHistory.Add(telemetry.Position);
             }
         }
 
@@ -324,7 +264,7 @@ namespace First
 
             // Render grid
             GL.BindVertexArray(gridVAO);
-            GL.LineWidth(0.0f);
+            GL.LineWidth(1.0f);
             int gridLineCount = 41 * 4 + 4; // 41 lines in each direction * 2 points each + axes
             GL.DrawArrays(PrimitiveType.Lines, 0, gridLineCount);
 
@@ -336,11 +276,6 @@ namespace First
             // Render thrust with blending for flame effect
             lock (telemetryLock)
             {
-                //currentTelemetry.ThrustMagnitude = 0.5f;
-                //currentTelemetry.Position.X = 0;
-                //currentTelemetry.Position.Y = 0;
-                //currentTelemetry.Position.Z = 20;
-
                 if (telemetryReceiver.currentTelemetry.ThrustMagnitude > 0.01f)
                 {
                     UpdateThrustGeometry();

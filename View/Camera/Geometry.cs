@@ -78,7 +78,7 @@ namespace First
                 float z = (float)Math.Sin(angle) * ROCKET_RADIUS;
 
                 // Position
-                vertices.AddRange(new[] { x, -ROCKET_LENGTH / 2, z });
+                vertices.AddRange(new[] { x, 0, z });
                 // Color (metallic gray)
                 vertices.AddRange(new[] { 0.5f, 0.5f, 0.6f });
             }
@@ -91,7 +91,7 @@ namespace First
                 float z = (float)Math.Sin(angle) * ROCKET_RADIUS;
 
                 // Position
-                vertices.AddRange(new[] { x, ROCKET_LENGTH / 2, z });
+                vertices.AddRange(new[] { x, ROCKET_LENGTH, z });
                 // Color (metallic gray)
                 vertices.AddRange(new[] { 0.6f, 0.6f, 0.7f });
             }
@@ -137,22 +137,22 @@ namespace First
         {
             float[] vertices = {
                 // Ground plane (large quad for background)
-                -100, -0.01f, -100,  0.15f, 0.15f, 0.15f,
-                 100, -0.01f, -100,  0.15f, 0.15f, 0.15f,
-                 100, -0.01f,  100,  0.15f, 0.15f, 0.15f,
-                -100, -0.01f,  100,  0.15f, 0.15f, 0.15f,
+                -100, -0.03f, -100,  0.15f, 0.15f, 0.15f,
+                 100, -0.03f, -100,  0.15f, 0.15f, 0.15f,
+                 100, -0.03f,  100,  0.15f, 0.15f, 0.15f,
+                -100, -0.03f,  100,  0.15f, 0.15f, 0.15f,
                 
                 // Landing pad center (X marks the spot)
-                -5, 0.02f, -5,  0.9f, 0.1f, 0.1f,
-                 5, 0.02f, -5,  0.9f, 0.1f, 0.1f,
-                 5, 0.02f,  5,  0.9f, 0.1f, 0.1f,
-                -5, 0.02f,  5,  0.9f, 0.1f, 0.1f,
+                -5, 0.03f, -5,  0.9f, 0.1f, 0.1f,
+                 5, 0.03f, -5,  0.9f, 0.1f, 0.1f,
+                 5, 0.03f,  5,  0.9f, 0.1f, 0.1f,
+                -5, 0.03f,  5,  0.9f, 0.1f, 0.1f,
                 
                 // Landing pad inner circle area
-                -3, 0.03f, -3,  1.0f, 0.3f, 0.3f,
-                 3, 0.03f, -3,  1.0f, 0.3f, 0.3f,
-                 3, 0.03f,  3,  1.0f, 0.3f, 0.3f,
-                -3, 0.03f,  3,  1.0f, 0.3f, 0.3f,
+                -3, 0.06f, -3,  1.0f, 0.3f, 0.3f,
+                 3, 0.06f, -3,  1.0f, 0.3f, 0.3f,
+                 3, 0.06f,  3,  1.0f, 0.3f, 0.3f,
+                -3, 0.06f,  3,  1.0f, 0.3f, 0.3f,
             };
 
             groundVAO = GL.GenVertexArray();

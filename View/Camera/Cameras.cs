@@ -89,7 +89,7 @@ namespace First
         {
             float fov = CurrentCamera.FOV;
             float asr = CurrentCamera.AspectRatio;
-            Matrix4 projection = Matrix4.CreatePerspectiveFieldOfView(MathHelper.DegreesToRadians(fov), asr, 0.01f, 100f);
+            Matrix4 projection = Matrix4.CreatePerspectiveFieldOfView(MathHelper.DegreesToRadians(fov), asr, 0.01f, 1000f);
             return projection;
         }
 

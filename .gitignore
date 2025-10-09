@@ -417,3 +417,5 @@ FodyWeavers.xsd
 *.msm
 *.msp
 /app/*.mat
+/View/Camera/bin/Debug/net8.0/*.pdb
+/app/Landing.out.txt
