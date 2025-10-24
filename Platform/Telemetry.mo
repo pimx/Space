@@ -2,7 +2,7 @@ within Platform;
 
   // External function declaration
 
-  function sendUDP
+  function Telemetry
     input Real values[:];
     input String ipAddress;
     input Integer port;
@@ -20,7 +20,7 @@ within Platform;
   #include <unistd.h>
 #endif
 
-void sendUDP(const double* values, size_t nvalues, const char* ip, int port) {
+void Telemetry(const double* values, size_t nvalues, const char* ip, int port) {
     static int initialized = 0;
     static int sockfd;
     static struct sockaddr_in servaddr;
@@ -52,4 +52,4 @@ void sendUDP(const double* values, size_t nvalues, const char* ip, int port) {
     close(sockfd);
     #endif
 }");
-  end sendUDP;
+  end Telemetry;

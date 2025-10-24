@@ -51,7 +51,7 @@ within Platform;
 
     // Send data at each step
     when sample(0, 0.01) then // Send every 0.01 seconds
-      sendUDP(
+      Telemetry(
         {
           time,
           rocket.pos[1],
