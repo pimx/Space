@@ -1,0 +1,85 @@
+within Hover;
+
+model Test
+  "Test model for the rocket thrust distribution system"
+  
+	import Modelica.Math.*;
+	import Modelica.Constants.pi;
+
+	Engine engine;
+  
+  // Instantiate the rocket thrust distribution model
+  //RocketThrustDistribution thrustDistributor(
+  //  offset = 0.8,           // 0.8 meters radial offset
+  //  maxThrust = 150000      // 150 kN max thrust per chamber
+  //);
+  
+  // Time-varying test inputs
+  //Real time = time "Simulation time";
+  Real testMagnitude "Test thrust magnitude";
+  Real testDirection[3] "Test thrust direction";
+  
+  Real tempDirection[3] "Test thrust direction";
+  
+  // Additional diagnostic outputs
+  //Real totalMomentMag "Magnitude of total moment";
+  //Real thrustVectoringAngle "Angle between desired and actual thrust direction [deg]";
+  //Real maxGimbalAngle "Maximum gimbal angle currently used [deg]";
+
+  Real dotProduct;
+  Real testDeviation "Deviation [grad]";
+  
+equation
+  // Generate time-varying test inputs
+  // Thrust magnitude ramps up and down
+  testMagnitude = 800000 * (0.5 + 0.4*sin(2*pi*time/10)); // 0 to 800 kN
+  
+  // Thrust direction varies to test gimbal control
+  // Start with forward thrust, then add lateral components
+  tempDirection[1] = cos(0.16*sin(2*pi*time/5));  // Mostly forward
+  tempDirection[2] = 0.16*sin(2*pi*time/5);        // Small Y component
+  tempDirection[3] = 0.13*cos(2*pi*time/7);       // Small Z component
+
+  testDirection = Vectors.normalize(tempDirection);
+  
+  // Connect inputs to thrust distributor
+  engine.requiredMagnitude = testMagnitude;
+  engine.requiredDirection = testDirection;
+  engine.centerPosition = {10,0,0};
+  
+  // Calculate diagnostic outputs
+  //totalMomentMag = Vectors.length(thrustDistributor.totalMoment);
+  
+  // Calculate angle between desired and actual thrust direction
+  if engine.actualMagnitude > 0 and Vectors.length(testDirection) > 0 then
+    dotProduct = Vectors.normalize(engine.actualDirection) * Vectors.normalize(testDirection);
+  else
+    dotProduct = 0;
+    //thrustVectoringAngle = 0;
+  end if;
+  testDeviation = acos(min(1.0, max(-1.0, dotProduct))) * 180/pi;
+  
+  // Find maximum gimbal angle currently in use
+  //maxGimbalAngle = 180/pi * max(
+  //  max(abs(thrustDistributor.gimbalAngles[:, 1])),
+  //  max(abs(thrustDistributor.gimbalAngles[:, 2]))
+  //);
+  
+  annotation(
+    experiment(
+      StartTime = 0,
+      StopTime = 20,
+      Interval = 0.01
+    ),
+    Documentation(info="<html>
+<p>Test model demonstrating the rocket thrust distribution system with:</p>
+<ul>
+<li>Time-varying thrust magnitude (0-800 kN)</li>
+<li>Time-varying thrust direction to test gimbal response</li>
+<li>Diagnostic outputs for moment magnitude and thrust vectoring accuracy</li>
+</ul>
+<p>Run this simulation to see how the system distributes thrust among chambers
+and how gimbal angles are calculated to achieve the desired thrust direction.</p>
+</html>"));
+  
+end Test;

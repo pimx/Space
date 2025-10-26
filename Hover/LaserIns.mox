@@ -1,0 +1,554 @@
+within Platform;
+
+model LaserINS "Complete laser INS with calibration, navigation, and frame transformations"
+	import SI = Modelica.SIunits;
+	import Modelica.Math.*;
+	
+	/* ==================================================================================
+		 COORDINATE FRAMES USED IN THIS MODEL:
+		 
+		 1. BODY FRAME (b-frame):
+				- Fixed to the IMU/vehicle
+				- Origin: IMU measurement center
+				- X-axis: Forward (along vehicle longitudinal axis)
+				- Y-axis: Right (along vehicle lateral axis)  
+				- Z-axis: Down (completing right-handed system)
+				- Rotates with the vehicle
+				
+		 2. NAVIGATION FRAME (n-frame) - NED Convention:
+				- Local tangent plane to Earth's surface
+				- Origin: Vehicle position
+				- X-axis: North (true north, not magnetic)
+				- Y-axis: East
+				- Z-axis: Down (toward Earth center)
+				- Remains level as vehicle moves
+				
+		 3. EARTH-CENTERED EARTH-FIXED FRAME (e-frame / ECEF):
+				- Fixed to rotating Earth
+				- Origin: Earth's center of mass
+				- X-axis: Through Greenwich meridian at equator
+				- Y-axis: 90° east of X-axis at equator
+				- Z-axis: Through North pole (right-handed system)
+				- Rotates with Earth at ω_earth = 7.292115×10⁻⁵ rad/s
+				
+		 4. EARTH-CENTERED INERTIAL FRAME (i-frame / ECI):
+				- Inertial (non-rotating) reference
+				- Origin: Earth's center of mass
+				- X-axis: Toward vernal equinox
+				- Y-axis: Completes right-handed system
+				- Z-axis: Through North pole
+				- Does not rotate with Earth
+				
+		 5. GEODETIC COORDINATES (LLH):
+				- Latitude (φ): Angle north/south from equator [-90°, +90°]
+				- Longitude (λ): Angle east/west from Greenwich [-180°, +180°]
+				- Height (h): Altitude above WGS-84 reference ellipsoid
+				
+		 TRANSFORMATION NOTATION:
+		 - C_b2n: Direction Cosine Matrix from body to navigation frame
+		 - C_n2e: Direction Cosine Matrix from navigation to ECEF frame
+		 - C_b2e: Direction Cosine Matrix from body to ECEF frame (C_n2e * C_b2n)
+		 - Quaternion: Represents rotation from navigation frame to body frame
+		 
+		 IMPORTANT CONVENTIONS:
+		 - All angular rates are in rad/s
+		 - All accelerations are specific force (includes gravity when stationary)
+		 - Gravity is removed during integration (added as a separate term)
+		 - Cross product convention: ω × v (angular rate cross velocity)
+	================================================================================== */
+	
+	// ================ Parameters - Gyroscope characteristics ================
+	parameter SI.AngularVelocity gyro_bias_stability = 0.01 * (PI/180/3600) "Bias stability (0.01 deg/hr)";
+	parameter Real gyro_scale_factor_error = 5e-6 "Scale factor error (5 ppm)";
+	parameter SI.AngularVelocity gyro_bias_initial[3] = {0.1, -0.08, 0.12} * (PI/180/3600) "Initial bias per axis";
+	parameter SI.AngularVelocity gyro_noise_density = 0.003 * (PI/180/sqrt(3600)) "Angular random walk";
+	parameter Real gyro_misalignment[3,3] = [1, 20e-6, -15e-6; -20e-6, 1, 25e-6; 15e-6, -25e-6, 1] "Misalignment matrix";
+	parameter SI.Frequency gyro_bandwidth = 100 "Gyroscope bandwidth (Hz)";
+	
+	// ================ Parameters - Accelerometer characteristics ================
+	parameter SI.Acceleration accel_bias_stability = 20e-6 * 9.81 "Bias stability (20 micro-g)";
+	parameter Real accel_scale_factor_error = 30e-6 "Scale factor error (30 ppm)";
+	parameter SI.Acceleration accel_bias_initial[3] = {100e-6, -80e-6, 120e-6} * 9.81 "Initial bias per axis";
+	parameter SI.Acceleration accel_noise_density = 10e-6 * 9.81 / sqrt(1) "Velocity random walk";
+	parameter Real accel_misalignment[3,3] = [1, 50e-6, -40e-6; -50e-6, 1, 60e-6; 40e-6, -60e-6, 1] "Misalignment matrix";
+	parameter SI.Frequency accel_bandwidth = 100 "Accelerometer bandwidth (Hz)";
+	
+	// ================ Parameters - Temperature effects ================
+	parameter Real temp_coefficient_gyro = 0.5 * (PI/180/3600) / 1 "Gyro temp coefficient";
+	parameter Real temp_coefficient_accel = 50e-6 * 9.81 / 1 "Accel temp coefficient";
+	
+	// ================ Parameters - Calibration ================
+	parameter Boolean enable_calibration = true "Enable calibration compensation";
+	parameter SI.Time calibration_time = 60 "Calibration duration at startup (seconds)";
+	parameter Real calibration_gain = 0.95 "Calibration compensation gain (0-1)";
+	
+	// ================ Parameters - Earth model ================
+	parameter SI.AngularVelocity omega_earth = 7.292115e-5 "Earth rotation rate (rad/s)";
+	parameter SI.Length R_earth = 6378137 "Earth equatorial radius (m)";
+	parameter SI.Length R_polar = 6356752.3 "Earth polar radius (m)";
+	parameter Real f = (R_earth - R_polar) / R_earth "Earth flattening";
+	parameter Real e2 = 2*f - f^2 "Earth eccentricity squared";
+	parameter SI.Acceleration g0 = 9.780318 "Equatorial gravity (m/s^2)";
+	
+	// ================ Parameters - Initial conditions ================
+	parameter Real q_initial[4] = {1, 0, 0, 0} "Initial quaternion [w, x, y, z] - represents rotation from n-frame to b-frame";
+	parameter SI.Position lat_initial = 0 "Initial geodetic latitude (rad) - positive north";
+	parameter SI.Position lon_initial = 0 "Initial geodetic longitude (rad) - positive east";
+	parameter SI.Position alt_initial = 0 "Initial altitude above WGS-84 ellipsoid (m)";
+	parameter SI.Velocity v_n_initial[3] = {0, 0, 0} "Initial velocity in NED navigation frame [North, East, Down] (m/s)";
+	
+	// ================ Parameters - System ================
+	parameter SI.Time sample_time = 0.001 "IMU sample time (1000 Hz)";
+	
+	// ================ Input connectors ================
+	Modelica.Blocks.Interfaces.RealInput omega_true[3](each unit="rad/s") "True angular velocity in body frame [p, q, r]"
+		annotation(Placement(transformation(extent={{-120,60},{-80,100}})));
+	Modelica.Blocks.Interfaces.RealInput a_true[3](each unit="m/s2") "True specific force in body frame [fx, fy, fz] (includes gravity when stationary)"
+		annotation(Placement(transformation(extent={{-120,10},{-80,50}})));
+	Modelica.Blocks.Interfaces.RealInput temperature(unit="K") "IMU temperature"
+		annotation(Placement(transformation(extent={{-120,-40},{-80,0}})));
+	Modelica.Blocks.Interfaces.BooleanInput calibration_mode "Calibration mode active"
+		annotation(Placement(transformation(extent={{-120,-90},{-80,-50}})));
+	
+	// ================ Output connectors ================
+	Modelica.Blocks.Interfaces.RealOutput omega_measured[3](each unit="rad/s") "Calibrated angular velocity in body frame"
+		annotation(Placement(transformation(extent={{80,70},{120,110}})));
+	Modelica.Blocks.Interfaces.RealOutput a_measured[3](each unit="m/s2") "Calibrated specific force in body frame"
+		annotation(Placement(transformation(extent={{80,40},{120,80}})));
+	Modelica.Blocks.Interfaces.RealOutput quaternion[4] "Attitude quaternion [w,x,y,z] from n-frame to b-frame"
+		annotation(Placement(transformation(extent={{80,10},{120,50}})));
+	Modelica.Blocks.Interfaces.RealOutput position_ECEF[3](each unit="m") "Position in ECEF frame [X,Y,Z]"
+		annotation(Placement(transformation(extent={{80,-20},{120,20}})));
+	Modelica.Blocks.Interfaces.RealOutput velocity_ECEF[3](each unit="m/s") "Velocity in ECEF frame [Vx,Vy,Vz]"
+		annotation(Placement(transformation(extent={{80,-50},{120,-10}})));
+	Modelica.Blocks.Interfaces.RealOutput position_LLH[3] "Geodetic coordinates [Lat(rad), Lon(rad), Height(m)]"
+		annotation(Placement(transformation(extent={{80,-80},{120,-40}})));
+	Modelica.Blocks.Interfaces.RealOutput C_b2e[3,3] "DCM from body frame to ECEF frame"
+		annotation(Placement(transformation(extent={{80,-110},{120,-70}})));
+	
+	// ================ Internal variables ================
+	// Raw sensor outputs
+	Real omega_raw[3] "Raw gyroscope output";
+	Real a_raw[3] "Raw accelerometer output";
+	
+	// Error states
+	Real gyro_bias[3](each start=0, each fixed=true) "Gyroscope bias drift";
+	Real accel_bias[3](each start=0, each fixed=true) "Accelerometer bias drift";
+	Real gyro_noise[3] "Gyroscope white noise";
+	Real accel_noise[3] "Accelerometer white noise";
+	Real temp_deviation "Temperature deviation from nominal";
+	
+	// Calibration states
+	Real gyro_bias_estimate[3](each start=0, each fixed=true) "Estimated gyro bias";
+	Real accel_bias_estimate[3](each start=0, each fixed=true) "Estimated accel bias";
+	Real scale_factor_estimate_gyro[3](each start=1, each fixed=true) "Estimated gyro scale factors";
+	Real scale_factor_estimate_accel[3](each start=1, each fixed=true) "Estimated accel scale factors";
+	Boolean calibration_complete(start=false, fixed=true);
+	
+	// Navigation states
+	Real q[4](start=q_initial, each fixed=true) "Quaternion [w,x,y,z] representing rotation from n-frame to b-frame";
+	Real v_ECEF[3](each fixed=true) "Velocity in ECEF frame [Vx, Vy, Vz] (m/s)";
+	Real v_n[3] "Velocity in NED navigation frame [Vn, Ve, Vd] (m/s)";
+	Real r_ECEF[3](each fixed=true) "Position in ECEF frame [X, Y, Z] (m)";
+	Real lat(start=lat_initial, fixed=true) "Geodetic latitude (rad)";
+	Real lon(start=lon_initial, fixed=true) "Geodetic longitude (rad)";
+	Real h(start=alt_initial, fixed=true) "Height above WGS-84 ellipsoid (m)";
+	
+	// Coordinate transformation matrices
+	Real C_b2n[3,3] "DCM from body frame to NED navigation frame";
+	Real C_n2e[3,3] "DCM from NED navigation frame to ECEF frame";
+	
+	// Gravity and Earth rate  
+	Real g_n[3] "Gravity vector in NED frame [0, 0, g] (m/s²)";
+	Real omega_ie_n[3] "Earth rotation rate in NED frame (rad/s)";
+	Real omega_ie_e[3] "Earth rotation rate in ECEF frame [0, 0, ω_earth] (rad/s)";
+	Real omega_en_n[3] "Transport rate in NED frame (rad/s)";
+	
+	// Random seeds (simplified)
+	Real seed_gyro[3] = {12345, 23456, 34567};
+	Real seed_accel[3] = {45678, 56789, 67890};
+	Real seed_bias_gyro[3] = {78901, 89012, 90123};
+	Real seed_bias_accel[3] = {11111, 22222, 33333};
+	
+protected
+	// ================ Functions ================
+	function whiteNoise "Pseudo-random noise generator"
+		input Real seed;
+		input Real amplitude;
+		input Real time_val;
+		output Real noise;
+	algorithm
+		noise := amplitude * sin(seed * time_val * 1000 + cos(seed * time_val * 500));
+	end whiteNoise;
+	
+	function quat2dcm "Convert quaternion to direction cosine matrix"
+		input Real q[4] "Quaternion [w,x,y,z] representing rotation from frame A to frame B";
+		output Real C[3,3] "DCM that transforms vectors from frame A to frame B (v_B = C * v_A)";
+	protected
+		Real qw, qx, qy, qz;
+	algorithm
+		qw := q[1]; qx := q[2]; qy := q[3]; qz := q[4];
+		
+		// This matrix transforms vectors from navigation frame to body frame when
+		// the quaternion represents the rotation from n-frame to b-frame
+		C[1,1] := qw^2 + qx^2 - qy^2 - qz^2;
+		C[1,2] := 2*(qx*qy - qw*qz);
+		C[1,3] := 2*(qx*qz + qw*qy);
+		
+		C[2,1] := 2*(qx*qy + qw*qz);
+		C[2,2] := qw^2 - qx^2 + qy^2 - qz^2;
+		C[2,3] := 2*(qy*qz - qw*qx);
+		
+		C[3,1] := 2*(qx*qz - qw*qy);
+		C[3,2] := 2*(qy*qz + qw*qx);
+		C[3,3] := qw^2 - qx^2 - qy^2 + qz^2;
+	end quat2dcm;
+	
+	function normalizeQuat "Normalize quaternion"
+		input Real q[4];
+		output Real q_norm[4];
+	protected
+		Real norm;
+	algorithm
+		norm := sqrt(q[1]^2 + q[2]^2 + q[3]^2 + q[4]^2);
+		if norm > 1e-10 then
+			q_norm := q / norm;
+		else
+			q_norm := {1, 0, 0, 0};
+		end if;
+	end normalizeQuat;
+	
+	function ecef2llh "Convert ECEF to Latitude, Longitude, Height"
+		input Real r_ecef[3];
+		output Real llh[3] "Latitude (rad), Longitude (rad), Height (m)";
+	protected
+		Real p, theta, N;
+	algorithm
+		p := sqrt(r_ecef[1]^2 + r_ecef[2]^2);
+		theta := atan2(r_ecef[3]*R_earth, p*R_polar);
+		
+		llh[1] := atan2(r_ecef[3] + e2*R_polar*sin(theta)^3, p - e2*R_earth*cos(theta)^3);
+		llh[2] := atan2(r_ecef[2], r_ecef[1]);
+		
+		N := R_earth / sqrt(1 - e2*sin(llh[1])^2);
+		llh[3] := p/cos(llh[1]) - N;
+	end ecef2llh;
+	
+	function llh2ecef "Convert Latitude, Longitude, Height to ECEF"
+		input Real llh[3] "Latitude (rad), Longitude (rad), Height (m)";
+		output Real r_ecef[3];
+	protected
+		Real N;
+	algorithm
+		N := R_earth / sqrt(1 - e2*sin(llh[1])^2);
+		
+		r_ecef[1] := (N + llh[3]) * cos(llh[1]) * cos(llh[2]);
+		r_ecef[2] := (N + llh[3]) * cos(llh[1]) * sin(llh[2]);
+		r_ecef[3] := (N*(1 - e2) + llh[3]) * sin(llh[1]);
+	end llh2ecef;
+	
+	function computeGravity "Compute gravity vector in NED navigation frame"
+		input Real lat "Geodetic latitude (rad)";
+		input Real h "Height above ellipsoid (m)";
+		output Real g[3] "Gravity vector in NED frame [0, 0, g_down] (m/s²)";
+	protected
+		Real g_mag;
+	algorithm
+		// WGS-84 gravity model - magnitude of gravity at given latitude and altitude
+		g_mag := g0*(1 + 0.0053024*sin(lat)^2 - 0.0000058*sin(2*lat)^2) - 3.086e-6*h;
+		// In NED frame: gravity points down (positive Z direction)
+		g := {0, 0, g_mag};
+	end computeGravity;
+	
+	function computeEarthRate "Compute Earth rotation vector in NED navigation frame"
+		input Real lat "Geodetic latitude (rad)";
+		output Real omega_ie[3] "Earth rate in NED frame (rad/s)";
+	algorithm
+		// Earth rotates eastward, so in NED frame:
+		// North component: ω_earth * cos(latitude)
+		// East component: 0
+		// Down component: -ω_earth * sin(latitude)
+		omega_ie := {omega_earth*cos(lat), 0, -omega_earth*sin(lat)};
+	end computeEarthRate;
+	
+	function computeTransportRate "Compute transport rate (motion over curved Earth)"
+		input Real v[3] "Velocity in NED frame [Vn, Ve, Vd] (m/s)";
+		input Real lat "Geodetic latitude (rad)";
+		input Real h "Height above ellipsoid (m)";
+		output Real omega_en[3] "Transport rate in NED frame (rad/s)";
+	protected
+		Real R_N, R_E;
+	algorithm
+		// Radius of curvature in meridian (north-south)
+		R_N := R_earth*(1 - e2) / (1 - e2*sin(lat)^2)^1.5;
+		// Radius of curvature in prime vertical (east-west)
+		R_E := R_earth / sqrt(1 - e2*sin(lat)^2);
+		
+		// Transport rate due to motion over curved Earth surface
+		// omega_EN_N = [Ve/(Re+h), -Vn/(Rn+h), -Ve*tan(lat)/(Re+h)]
+		omega_en[1] := v[2] / (R_E + h);         // East velocity causes rotation about North
+		omega_en[2] := -v[1] / (R_N + h);        // North velocity causes rotation about East
+		omega_en[3] := -v[2]*tan(lat) / (R_E + h); // East velocity at latitude causes rotation about Down
+	end computeTransportRate;
+	
+	function nav2ecef_matrix "Create DCM from NED navigation frame to ECEF frame"
+		input Real lat "Geodetic latitude (rad)";
+		input Real lon "Geodetic longitude (rad)";
+		output Real C[3,3] "DCM that transforms vectors from NED to ECEF";
+	algorithm
+		// This matrix transforms vectors from local NED frame to ECEF frame
+		// The NED axes in terms of ECEF are:
+		// N (North): points toward north pole along meridian
+		// E (East): points east along parallel
+		// D (Down): points toward Earth center
+		
+		// First row: North vector in ECEF coordinates
+		C[1,1] := -sin(lat)*cos(lon);
+		C[1,2] := -sin(lon);
+		C[1,3] := -cos(lat)*cos(lon);
+		
+		// Second row: East vector in ECEF coordinates
+		C[2,1] := -sin(lat)*sin(lon);
+		C[2,2] := cos(lon);
+		C[2,3] := -cos(lat)*sin(lon);
+		
+		// Third row: Down vector in ECEF coordinates
+		C[3,1] := cos(lat);
+		C[3,2] := 0;
+		C[3,3] := -sin(lat);
+	end nav2ecef_matrix;
+	
+initial equation
+	// Initialize ECEF position from LLH
+	r_ECEF = llh2ecef({lat_initial, lon_initial, alt_initial});
+	
+	// Initialize ECEF velocity from navigation frame velocity
+	v_ECEF = nav2ecef_matrix(lat_initial, lon_initial) * v_n_initial;
+	
+equation
+	// ================ Temperature effects ================
+	temp_deviation = temperature - 293.0;
+	
+	// ================ Sensor error modeling ================
+	// Gyroscope bias drift (random walk)
+	for i in 1:3 loop
+		der(gyro_bias[i]) = if calibration_mode then 0 else 
+			gyro_bias_stability * whiteNoise(seed_bias_gyro[i], 1, time) / sqrt(sample_time);
+	end for;
+	
+	// Accelerometer bias drift (random walk)
+	for i in 1:3 loop
+		der(accel_bias[i]) = if calibration_mode then 0 else 
+			accel_bias_stability * whiteNoise(seed_bias_accel[i], 1, time) / sqrt(sample_time);
+	end for;
+	
+	// White noise generation
+	for i in 1:3 loop
+		gyro_noise[i] = gyro_noise_density * whiteNoise(seed_gyro[i], 1, time) / sqrt(sample_time);
+		accel_noise[i] = accel_noise_density * whiteNoise(seed_accel[i], 1, time) / sqrt(sample_time);
+	end for;
+	
+	// ================ Raw sensor outputs ================
+	// Gyroscope measurement model with all error sources
+	omega_raw = gyro_misalignment * (omega_true .* (ones(3) + gyro_scale_factor_error*ones(3))) + 
+							gyro_bias_initial + gyro_bias + 
+							temp_coefficient_gyro * temp_deviation * ones(3) + 
+							gyro_noise;
+	
+	// Accelerometer measurement model with all error sources  
+	a_raw = accel_misalignment * (a_true .* (ones(3) + accel_scale_factor_error*ones(3))) + 
+					accel_bias_initial + accel_bias + 
+					temp_coefficient_accel * temp_deviation * ones(3) + 
+					accel_noise;
+	
+	// ================ Calibration ================
+	// Calibration state updates
+	when calibration_mode and time > pre(time) then
+		calibration_complete = false;
+	elsewhen not calibration_mode and pre(calibration_mode) then
+		calibration_complete = true;
+	end when;
+	
+	// Bias estimation during calibration (simplified - assumes stationary)
+	computeGravityLatH = computeGravity(lat, h);
+	for i in 1:3 loop
+		der(gyro_bias_estimate[i]) = if calibration_mode then 
+			(omega_raw[i] - gyro_bias_estimate[i]) / calibration_time else 0;
+		der(accel_bias_estimate[i]) = if calibration_mode then 
+			(a_raw[i] - accel_bias_estimate[i] + computeGravityLatH[i]) / calibration_time else 0;
+		der(scale_factor_estimate_gyro[i]) = 0; // Simplified - would need rotation table
+		der(scale_factor_estimate_accel[i]) = 0; // Simplified - would need precise orientation
+	end for;
+	
+	// Apply calibration compensation
+	if enable_calibration and calibration_complete then
+		omega_measured = omega_raw - calibration_gain * gyro_bias_estimate;
+		a_measured = a_raw - calibration_gain * accel_bias_estimate;
+	else
+		omega_measured = omega_raw;
+		a_measured = a_raw;
+	end if;
+	
+	// ================ Attitude propagation (quaternion) ================
+	// Quaternion differential equation for rotation from NED to body frame
+	// ω_b/n^b is the angular velocity of body w.r.t. navigation frame, expressed in body frame
+	der(q[1]) = 0.5 * (-omega_measured[1]*q[2] - omega_measured[2]*q[3] - omega_measured[3]*q[4]);
+	der(q[2]) = 0.5 * (omega_measured[1]*q[1] + omega_measured[3]*q[3] - omega_measured[2]*q[4]);
+	der(q[3]) = 0.5 * (omega_measured[2]*q[1] - omega_measured[3]*q[2] + omega_measured[1]*q[4]);
+	der(q[4]) = 0.5 * (omega_measured[3]*q[1] + omega_measured[2]*q[2] - omega_measured[1]*q[3]);
+	
+	// Normalize quaternion output to prevent numerical drift
+	quaternion = normalizeQuat(q);
+	
+	// ================ Coordinate transformations ================
+	// Body to NED navigation frame DCM (transpose because quaternion represents n→b rotation)
+	C_b2n = quat2dcm(quaternion);
+	
+	// NED navigation frame to ECEF frame DCM
+	C_n2e = nav2ecef_matrix(lat, lon);
+	
+	// Body frame to ECEF frame DCM (chain transformation)
+	C_b2e = C_n2e * C_b2n;
+	
+	// ================ Earth model parameters ================
+	// Gravity vector in NED frame (points down, positive in NED Z-axis)
+	g_n = computeGravity(lat, h);
+	
+	// Earth rotation rate vector in NED frame
+	omega_ie_n = computeEarthRate(lat);
+	
+	// Earth rotation rate in ECEF frame (about Z-axis)
+	omega_ie_e = {0, 0, omega_earth};
+	
+	// Transform ECEF velocity to NED frame for transport rate calculation
+	v_n = transpose(C_n2e) * v_ECEF;
+	
+	// Transport rate: rotation of NED frame due to vehicle motion over curved Earth
+	omega_en_n = computeTransportRate(v_n, lat, h);
+	
+	// ================ Velocity integration ================
+	/* Navigation equation in ECEF frame:
+		 dV_ECEF/dt = f_b^e + g_n^e - (2*Ω_ie^e) × V_ECEF
+		 
+		 Where:
+		 - f_b^e: Specific force from accelerometers, transformed to ECEF
+		 - g_n^e: Gravity vector, transformed from NED to ECEF  
+		 - Ω_ie^e: Earth rotation rate in ECEF
+		 - The Coriolis term (2*Ω × V) accounts for motion in rotating frame
+		 
+		 Alternative formulation through NED frame (more accurate for Earth effects):
+		 dV_ECEF/dt = C_n→e * [f_n + g_n - (2*Ω_ie^n + Ω_en^n) × v_n]
+	*/
+	
+	// Transform specific force from body to ECEF and add gravity/Coriolis corrections
+	der(v_ECEF) = C_b2e * a_measured + 
+								C_n2e * (g_n - cross((2*omega_ie_n + omega_en_n), v_n));
+	
+	// ================ Position integration ================
+	// Integrate velocity to get position in ECEF frame
+	der(r_ECEF) = v_ECEF;
+	
+	// ================ Update geodetic coordinates ================
+	// Convert ECEF position to geodetic coordinates (latitude, longitude, height)
+	{lat, lon, h} = ecef2llh(r_ECEF);
+	
+	// ================ Outputs ================
+	position_ECEF = r_ECEF;
+	velocity_ECEF = v_ECEF;
+	position_LLH = {lat, lon, h};
+	
+	annotation(
+		Icon(graphics={
+			Rectangle(extent={{-100,100},{100,-100}}, lineColor={0,0,0}, fillColor={180,180,240}, fillPattern=FillPattern.Solid),
+			Text(extent={{-80,40},{80,10}}, lineColor={0,0,0}, textString="Laser INS"),
+			Text(extent={{-80,0},{80,-30}}, lineColor={0,0,0}, textString="%name"),
+			Ellipse(extent={{-50,80},{50,50}}, lineColor={255,0,0}, fillColor={255,200,200}, fillPattern=FillPattern.Solid),
+			Line(points={{0,65},{30,65}}, color={255,0,0}, thickness=2),
+			Line(points={{0,65},{0,35}}, color={255,0,0}, thickness=2),
+			Line(points={{0,65},{-20,85}}, color={255,0,0}, thickness=2)
+		}),
+		Documentation(info="<html>
+<h4>Complete Laser INS Model with Calibration and Navigation</h4>
+<p>This model implements a complete strapdown inertial navigation system with NED (North-East-Down) navigation frame convention.</p>
+
+<h5>Coordinate Frames:</h5>
+<ul>
+<li><b>Body Frame (b-frame)</b>: Fixed to IMU, X=forward, Y=right, Z=down</li>
+<li><b>Navigation Frame (n-frame)</b>: Local NED, X=North, Y=East, Z=Down (toward Earth center)</li>
+<li><b>ECEF Frame (e-frame)</b>: Earth-fixed, X=Greenwich meridian, Z=North pole</li>
+<li><b>Geodetic (LLH)</b>: Latitude (±90°), Longitude (±180°), Height above WGS-84</li>
+</ul>
+
+<h5>Core Features:</h5>
+<ul>
+<li><b>High-fidelity sensor modeling</b>: Ring laser gyroscopes and precision accelerometers</li>
+<li><b>Calibration system</b>: Estimates and compensates systematic errors</li>
+<li><b>Quaternion-based attitude</b>: Singularity-free attitude representation</li>
+<li><b>Full navigation solution</b>: Position, velocity, and attitude in multiple frames</li>
+<li><b>ECEF integration</b>: Proper Coriolis and transport rate compensation</li>
+</ul>
+
+<h5>Sensor Specifications:</h5>
+<ul>
+<li>Gyroscope: 0.01 deg/hr bias stability, 0.003 deg/√hr ARW</li>
+<li>Accelerometer: 20 μg bias stability, 10 μg/√Hz VRW</li>
+<li>Temperature compensation included</li>
+<li>Full misalignment and scale factor error modeling</li>
+</ul>
+
+<h5>Navigation Mechanization:</h5>
+<ul>
+<li>Quaternion attitude propagation (no gimbal lock)</li>
+<li>ECEF position/velocity integration</li>
+<li>WGS-84 Earth model with gravity variations</li>
+<li>Coriolis effect: 2Ω×v compensation</li>
+<li>Transport rate: vehicle motion over curved Earth</li>
+</ul>
+
+<h5>Usage Example:</h5>
+<pre>
+model RocketSimulation
+	LaserINS ins(
+		// Initial position (Cape Canaveral)
+		lat_initial = 28.5 * (PI/180),    // degrees to radians
+		lon_initial = -80.6 * (PI/180),
+		alt_initial = 10,                  // meters above WGS-84
+		
+		// Initial velocity in NED frame
+		v_n_initial = {0, 0, 0},          // [North, East, Down] m/s
+		
+		// Initial attitude (level, north-pointing)
+		q_initial = {1, 0, 0, 0},         // quaternion [w,x,y,z]
+		
+		// Calibration settings
+		calibration_time = 120,           // 2-minute calibration
+		enable_calibration = true
+	);
+	
+equation
+	// Connect to rocket dynamics
+	ins.omega_true = rocket.angular_velocity_body;  // [p,q,r] rad/s
+	ins.a_true = rocket.specific_force_body;        // [ax,ay,az] m/s²
+	ins.temperature = rocket.imu_temperature;        // Kelvin
+	
+	// Calibration during countdown
+	ins.calibration_mode = time < 120;
+	
+	// Use INS outputs
+	control.quaternion = ins.quaternion;        // Attitude
+	control.position = ins.position_ECEF;       // Position
+	control.geodetic = ins.position_LLH;        // Lat/Lon/Alt
+end RocketSimulation;
+</pre>
+
+<h5>Important Notes:</h5>
+<ul>
+<li>Specific force includes gravity when stationary (removed during integration)</li>
+<li>Angular rates are body rates relative to inertial space</li>
+<li>Position drift: ~1-2 nmi/hour typical for this grade INS</li>
+<li>Consider GPS/GNSS aiding for long-duration flights</li>
+<li>Replace pseudo-random noise with proper stochastic models for production</li>
+</ul>
+</html>"));
+	
+end LaserINS;
