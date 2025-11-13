@@ -1,0 +1,606 @@
+package Rocket6DOF "6-DOF Rocket Model with ECI integration and ECEF outputs"
+
+  // ============================================================================
+  // CONSTANTS AND PARAMETERS
+  // ============================================================================
+  
+  package Constants
+    constant Real mu = 3.986004418e14 "Earth gravitational parameter [m^3/s^2]";
+    constant Real omega_earth = 7.2921159e-5 "Earth rotation rate [rad/s]";
+    constant Real R_earth = 6378137.0 "WGS84 equatorial radius [m]";
+    constant Real f_earth = 1/298.257223563 "WGS84 flattening";
+    constant Real e_earth = sqrt(2*f_earth - f_earth^2) "WGS84 eccentricity";
+    constant Real g0 = 9.80665 "Standard gravity [m/s^2]";
+  end Constants;
+
+  // ============================================================================
+  // COORDINATE TRANSFORMATION FUNCTIONS
+  // ============================================================================
+  
+  package Transformations
+    
+    function quaternionMultiply "Multiply two quaternions: q_result = q1 * q2"
+      input Real q1[4] "First quaternion [w,x,y,z]";
+      input Real q2[4] "Second quaternion [w,x,y,z]";
+      output Real q_result[4] "Result quaternion";
+    algorithm
+      q_result[1] := q1[1]*q2[1] - q1[2]*q2[2] - q1[3]*q2[3] - q1[4]*q2[4];
+      q_result[2] := q1[1]*q2[2] + q1[2]*q2[1] + q1[3]*q2[4] - q1[4]*q2[3];
+      q_result[3] := q1[1]*q2[3] - q1[2]*q2[4] + q1[3]*q2[1] + q1[4]*q2[2];
+      q_result[4] := q1[1]*q2[4] + q1[2]*q2[3] - q1[3]*q2[2] + q1[4]*q2[1];
+    end quaternionMultiply;
+    
+    function quaternionConjugate "Conjugate of quaternion"
+      input Real q[4] "Input quaternion [w,x,y,z]";
+      output Real q_conj[4] "Conjugate quaternion";
+    algorithm
+      q_conj := {q[1], -q[2], -q[3], -q[4]};
+    end quaternionConjugate;
+    
+    function quaternionNormalize "Normalize quaternion"
+      input Real q[4] "Input quaternion";
+      output Real q_norm[4] "Normalized quaternion";
+    protected
+      Real norm;
+    algorithm
+      norm := sqrt(q[1]^2 + q[2]^2 + q[3]^2 + q[4]^2);
+      q_norm := q / norm;
+    end quaternionNormalize;
+    
+    function quaternionToRotationMatrix "Convert quaternion to rotation matrix"
+      input Real q[4] "Quaternion [w,x,y,z]";
+      output Real R[3,3] "Rotation matrix";
+    protected
+      Real w, x, y, z;
+    algorithm
+      w := q[1]; x := q[2]; y := q[3]; z := q[4];
+      
+      R[1,1] := 1 - 2*(y^2 + z^2);
+      R[1,2] := 2*(x*y - w*z);
+      R[1,3] := 2*(x*z + w*y);
+      
+      R[2,1] := 2*(x*y + w*z);
+      R[2,2] := 1 - 2*(x^2 + z^2);
+      R[2,3] := 2*(y*z - w*x);
+      
+      R[3,1] := 2*(x*z - w*y);
+      R[3,2] := 2*(y*z + w*x);
+      R[3,3] := 1 - 2*(x^2 + y^2);
+    end quaternionToRotationMatrix;
+    
+    function quaternionToEuler "Convert quaternion to Euler angles (ZYX sequence)"
+      input Real q[4] "Quaternion [w,x,y,z]";
+      output Real euler[3] "Euler angles [yaw, pitch, roll] in radians";
+    protected
+      Real w, x, y, z;
+      Real sinp;
+    algorithm
+      w := q[1]; x := q[2]; y := q[3]; z := q[4];
+      
+      // Roll (x-axis rotation)
+      euler[3] := atan2(2*(w*x + y*z), 1 - 2*(x^2 + y^2));
+      
+      // Pitch (y-axis rotation)
+      sinp := 2*(w*y - z*x);
+      if abs(sinp) >= 1 then
+        euler[2] := sign(sinp) * Modelica.Constants.pi/2; // Use 90 degrees if out of range
+      else
+        euler[2] := asin(sinp);
+      end if;
+      
+      // Yaw (z-axis rotation)
+      euler[1] := atan2(2*(w*z + x*y), 1 - 2*(y^2 + z^2));
+    end quaternionToEuler;
+    
+    function ECItoECEF "Transform position from ECI to ECEF"
+      input Real r_ECI[3] "Position in ECI [m]";
+      input Real t "Time since reference epoch [s]";
+      output Real r_ECEF[3] "Position in ECEF [m]";
+    protected
+      Real theta "Earth rotation angle";
+    algorithm
+      theta := Constants.omega_earth * t;
+      r_ECEF[1] := cos(theta)*r_ECI[1] + sin(theta)*r_ECI[2];
+      r_ECEF[2] := -sin(theta)*r_ECI[1] + cos(theta)*r_ECI[2];
+      r_ECEF[3] := r_ECI[3];
+    end ECItoECEF;
+    
+    function ECEFtoECI "Transform position from ECEF to ECI"
+      input Real r_ECEF[3] "Position in ECEF [m]";
+      input Real t "Time since reference epoch [s]";
+      output Real r_ECI[3] "Position in ECI [m]";
+    protected
+      Real theta "Earth rotation angle";
+    algorithm
+      theta := Constants.omega_earth * t;
+      r_ECI[1] := cos(theta)*r_ECEF[1] - sin(theta)*r_ECEF[2];
+      r_ECI[2] := sin(theta)*r_ECEF[1] + cos(theta)*r_ECEF[2];
+      r_ECI[3] := r_ECEF[3];
+    end ECEFtoECI;
+    
+    function velocityECItoECEF "Transform velocity from ECI to ECEF"
+      input Real r_ECI[3] "Position in ECI [m]";
+      input Real v_ECI[3] "Velocity in ECI [m/s]";
+      input Real t "Time since reference epoch [s]";
+      output Real v_ECEF[3] "Velocity in ECEF [m/s]";
+    protected
+      Real theta "Earth rotation angle";
+      Real r_ECEF[3];
+    algorithm
+      theta := Constants.omega_earth * t;
+      
+      // Transform velocity
+      v_ECEF[1] := cos(theta)*v_ECI[1] + sin(theta)*v_ECI[2];
+      v_ECEF[2] := -sin(theta)*v_ECI[1] + cos(theta)*v_ECI[2];
+      v_ECEF[3] := v_ECI[3];
+      
+      // Subtract Earth rotation component
+      r_ECEF := ECItoECEF(r_ECI, t);
+      v_ECEF[1] := v_ECEF[1] + Constants.omega_earth * r_ECEF[2];
+      v_ECEF[2] := v_ECEF[2] - Constants.omega_earth * r_ECEF[1];
+    end velocityECItoECEF;
+    
+    function ECEFtoGeodetic "Convert ECEF to geodetic coordinates (WGS84)"
+      input Real r_ECEF[3] "Position in ECEF [m]";
+      output Real lat "Latitude [rad]";
+      output Real lon "Longitude [rad]";
+      output Real alt "Altitude above ellipsoid [m]";
+    protected
+      Real x, y, z;
+      Real p, theta, N;
+      constant Real a = Constants.R_earth;
+      constant Real e2 = Constants.e_earth^2;
+      constant Real b = a*(1 - Constants.f_earth);
+    algorithm
+      x := r_ECEF[1];
+      y := r_ECEF[2];
+      z := r_ECEF[3];
+      
+      p := sqrt(x^2 + y^2);
+      theta := atan2(z*a, p*b);
+      
+      lon := atan2(y, x);
+      lat := atan2(z + (e2/(1-e2))*b*sin(theta)^3, p - e2*a*cos(theta)^3);
+      
+      N := a / sqrt(1 - e2*sin(lat)^2);
+      alt := p/cos(lat) - N;
+    end ECEFtoGeodetic;
+    
+  end Transformations;
+
+  // ============================================================================
+  // ATMOSPHERE MODEL
+  // ============================================================================
+  
+  package Atmosphere
+    
+    function density "Simple exponential atmosphere model"
+      input Real altitude "Altitude above sea level [m]";
+      output Real rho "Air density [kg/m^3]";
+    protected
+      constant Real rho0 = 1.225 "Sea level density";
+      constant Real H = 8500.0 "Scale height [m]";
+    algorithm
+      if altitude < 0 then
+        rho := rho0;
+      else
+        rho := rho0 * exp(-altitude/H);
+      end if;
+    end density;
+    
+    function speedOfSound "Speed of sound"
+      input Real altitude "Altitude [m]";
+      output Real a "Speed of sound [m/s]";
+    protected
+      constant Real a0 = 340.3 "Sea level speed of sound";
+      constant Real T0 = 288.15 "Sea level temperature [K]";
+      Real T "Temperature [K]";
+    algorithm
+      T := max(216.65, T0 - 0.0065*altitude); // Simple linear model
+      a := sqrt(1.4 * 287.05 * T);
+    end speedOfSound;
+    
+  end Atmosphere;
+
+  // ============================================================================
+  // AERODYNAMICS MODEL
+  // ============================================================================
+  
+  model AerodynamicsModel "6-DOF aerodynamic forces and moments"
+    
+    // Geometric parameters
+    parameter Real S_ref = 1.0 "Reference area [m^2]";
+    parameter Real L_ref = 10.0 "Reference length [m]";
+    parameter Real D_ref = 1.0 "Reference diameter [m]";
+    
+    // Inputs
+    input Real v_body[3] "Velocity in body frame [m/s]";
+    input Real omega_body[3] "Angular velocity in body frame [rad/s]";
+    input Real altitude "Altitude [m]";
+    input Real q_dyn "Dynamic pressure [Pa]";
+    
+    // Outputs
+    output Real F_aero[3] "Aerodynamic force in body frame [N]";
+    output Real M_aero[3] "Aerodynamic moment in body frame [N·m]";
+    
+    // Aerodynamic angles
+    Real alpha "Angle of attack [rad]";
+    Real beta "Sideslip angle [rad]";
+    Real V_mag "Velocity magnitude [m/s]";
+    Real Mach "Mach number";
+    
+    // Aerodynamic coefficients
+    Real CD "Drag coefficient";
+    Real CL "Lift coefficient";
+    Real CY "Side force coefficient";
+    Real Cl "Rolling moment coefficient";
+    Real Cm "Pitching moment coefficient";
+    Real Cn "Yawing moment coefficient";
+    
+  equation
+    // Velocity magnitude
+    V_mag = sqrt(v_body[1]^2 + v_body[2]^2 + v_body[3]^2);
+    
+    // Aerodynamic angles
+    alpha = atan2(v_body[3], v_body[1]);
+    beta = asin(v_body[2] / max(V_mag, 1e-6));
+    
+    // Mach number
+    Mach = V_mag / Atmosphere.speedOfSound(altitude);
+    
+    // ========== PLACEHOLDER AERODYNAMIC COEFFICIENTS ==========
+    // These should be replaced with actual aerodynamic data
+    
+    // Drag coefficient (example: function of Mach and alpha)
+    CD = 0.15 + 0.3*alpha^2 + 0.1*Mach;
+    
+    // Lift coefficient
+    CL = 1.5*sin(2*alpha);
+    
+    // Side force coefficient
+    CY = -0.5*beta;
+    
+    // Rolling moment coefficient (due to sideslip and roll rate)
+    Cl = -0.1*beta - 0.05*omega_body[1]*D_ref/max(V_mag, 1.0);
+    
+    // Pitching moment coefficient (due to angle of attack and pitch rate)
+    Cm = -0.5*alpha - 0.1*omega_body[2]*L_ref/max(V_mag, 1.0);
+    
+    // Yawing moment coefficient (due to sideslip and yaw rate)
+    Cn = 0.1*beta - 0.05*omega_body[3]*L_ref/max(V_mag, 1.0);
+    
+    // ========== END PLACEHOLDER COEFFICIENTS ==========
+    
+    // Aerodynamic forces in body frame
+    // Convention: X-forward (drag opposes), Y-right (side force), Z-down (lift opposes)
+    F_aero[1] = -q_dyn*S_ref*CD; // Drag (negative X)
+    F_aero[2] = q_dyn*S_ref*CY;  // Side force
+    F_aero[3] = -q_dyn*S_ref*CL; // Lift (negative Z for positive alpha)
+    
+    // Aerodynamic moments in body frame
+    M_aero[1] = q_dyn*S_ref*D_ref*Cl; // Rolling moment
+    M_aero[2] = q_dyn*S_ref*L_ref*Cm; // Pitching moment
+    M_aero[3] = q_dyn*S_ref*L_ref*Cn; // Yawing moment
+    
+  end AerodynamicsModel;
+
+  // ============================================================================
+  // MASS PROPERTIES MODEL
+  // ============================================================================
+  
+  model MassPropertiesModel "Variable mass properties with fuel depletion"
+    
+    // Structural parameters
+    parameter Real m_dry = 1000.0 "Dry mass [kg]";
+    parameter Real m_fuel_initial = 9000.0 "Initial fuel mass [kg]";
+    parameter Real x_cm_dry = 0.0 "Dry CoM position from nose [m]";
+    parameter Real x_fuel_empty = -5.0 "Empty fuel tank CoM from nose [m]";
+    parameter Real x_fuel_full = -5.0 "Full fuel tank CoM from nose [m]";
+    
+    // Dry inertia tensor (body frame, at dry CoM)
+    parameter Real I_dry[3,3] = [1000, 0, 0; 0, 10000, 0; 0, 0, 10000] "Dry inertia tensor [kg·m^2]";
+    
+    // Fuel inertia tensor (at fuel tank CoM)
+    parameter Real I_fuel_full[3,3] = [500, 0, 0; 0, 5000, 0; 0, 0, 5000] "Full fuel inertia tensor [kg·m^2]";
+    
+    // Inputs
+    input Real m_dot_fuel "Fuel mass flow rate [kg/s]";
+    
+    // States
+    Real m_fuel(start=m_fuel_initial, fixed=true) "Current fuel mass [kg]";
+    
+    // Outputs
+    output Real m_total "Total mass [kg]";
+    output Real x_cm "Center of mass position from nose [m]";
+    output Real I_body[3,3] "Inertia tensor at CoM in body frame [kg·m^2]";
+    
+  protected
+    Real fuel_fraction "Fuel fraction remaining";
+    Real x_fuel "Current fuel CoM position [m]";
+    Real I_fuel[3,3] "Current fuel inertia tensor [kg·m^2]";
+    Real dx_dry "Distance from total CoM to dry CoM [m]";
+    Real dx_fuel "Distance from total CoM to fuel CoM [m]";
+    
+  equation
+    // Fuel depletion
+    der(m_fuel) = -m_dot_fuel;
+    
+    // Total mass
+    m_total = m_dry + max(0, m_fuel);
+    
+    // Fuel fraction
+    fuel_fraction = max(0, m_fuel) / m_fuel_initial;
+    
+    // Fuel CoM shifts as fuel depletes (linear interpolation)
+    x_fuel = x_fuel_full*fuel_fraction + x_fuel_empty*(1 - fuel_fraction);
+    
+    // Total CoM position
+    x_cm = (m_dry*x_cm_dry + max(0, m_fuel)*x_fuel) / m_total;
+    
+    // Distances from total CoM to component CoMs
+    dx_dry = x_cm_dry - x_cm;
+    dx_fuel = x_fuel - x_cm;
+    
+    // Scale fuel inertia with mass
+    I_fuel = I_fuel_full * fuel_fraction;
+    
+    // Parallel axis theorem to get total inertia at combined CoM
+    // I_total = I_dry + m_dry*[dy^2+dz^2  -dx*dy  -dx*dz; -dx*dy  dx^2+dz^2  -dy*dz; -dx*dz  -dy*dz  dx^2+dy^2]
+    // For symmetric rocket (dy=dz=0), only X-offset matters
+    
+    I_body[1,1] = I_dry[1,1] + I_fuel[1,1];
+    I_body[1,2] = I_dry[1,2] + I_fuel[1,2];
+    I_body[1,3] = I_dry[1,3] + I_fuel[1,3];
+    
+    I_body[2,1] = I_body[1,2];
+    I_body[2,2] = I_dry[2,2] + m_dry*dx_dry^2 + I_fuel[2,2] + max(0,m_fuel)*dx_fuel^2;
+    I_body[2,3] = I_dry[2,3] + I_fuel[2,3];
+    
+    I_body[3,1] = I_body[1,3];
+    I_body[3,2] = I_body[2,3];
+    I_body[3,3] = I_dry[3,3] + m_dry*dx_dry^2 + I_fuel[3,3] + max(0,m_fuel)*dx_fuel^2;
+    
+  end MassPropertiesModel;
+
+  // ============================================================================
+  // THRUST MODEL
+  // ============================================================================
+  
+  model ThrustModel "Thrust magnitude and direction with dynamics"
+    
+    // Engine parameters
+    parameter Real T_max = 100000.0 "Maximum thrust [N]";
+    parameter Real Isp = 300.0 "Specific impulse [s]";
+    parameter Real tau_thrust = 0.1 "Thrust response time constant [s]";
+    parameter Real tau_direction = 0.05 "Direction response time constant [s]";
+    
+    // Commanded inputs
+    input Real T_cmd "Commanded thrust magnitude [N]";
+    input Real u_thrust_cmd[3] "Commanded thrust direction (unit vector in body frame)";
+    
+    // Actual thrust states (with dynamics)
+    Real T_actual(start=0, fixed=true) "Actual thrust magnitude [N]";
+    Real u_thrust[3](each start=0, each fixed=true) "Actual thrust direction (unit vector)";
+    
+    // Outputs
+    output Real F_thrust[3] "Thrust force in body frame [N]";
+    output Real M_thrust[3] "Thrust moment in body frame [N·m]";
+    output Real m_dot "Propellant mass flow rate [kg/s]";
+    
+    // Thrust offset from CoM
+    parameter Real x_thrust = -6.0 "Thrust application point from nose [m]";
+    input Real x_cm "Center of mass position from nose [m]";
+    
+  protected
+    Real u_cmd_norm "Normalization of commanded direction";
+    Real dx_thrust "Thrust lever arm from CoM [m]";
+    
+  equation
+    // Thrust magnitude dynamics (first-order lag)
+    tau_thrust * der(T_actual) = T_cmd - T_actual;
+    
+    // Normalize commanded direction
+    u_cmd_norm = sqrt(u_thrust_cmd[1]^2 + u_thrust_cmd[2]^2 + u_thrust_cmd[3]^2);
+    
+    // Thrust direction dynamics (first-order lag on each component)
+    if u_cmd_norm > 1e-6 then
+      tau_direction * der(u_thrust[1]) = u_thrust_cmd[1]/u_cmd_norm - u_thrust[1];
+      tau_direction * der(u_thrust[2]) = u_thrust_cmd[2]/u_cmd_norm - u_thrust[2];
+      tau_direction * der(u_thrust[3]) = u_thrust_cmd[3]/u_cmd_norm - u_thrust[3];
+    else
+      tau_direction * der(u_thrust[1]) = -u_thrust[1];
+      tau_direction * der(u_thrust[2]) = -u_thrust[2];
+      tau_direction * der(u_thrust[3]) = 1.0 - u_thrust[3]; // Default to +X direction
+    end if;
+    
+    // Thrust force in body frame
+    F_thrust = T_actual * u_thrust;
+    
+    // Thrust lever arm from CoM
+    dx_thrust = x_thrust - x_cm;
+    
+    // Thrust moment (cross product: r × F, where r is in body frame)
+    // r = [dx_thrust, 0, 0], F = T_actual * u_thrust
+    M_thrust[1] = 0; // No roll moment from axial offset
+    M_thrust[2] = -dx_thrust * F_thrust[3]; // Pitch moment from Z-force
+    M_thrust[3] = dx_thrust * F_thrust[2];  // Yaw moment from Y-force
+    
+    // Mass flow rate
+    m_dot = T_actual / (Isp * Constants.g0);
+    
+  end ThrustModel;
+
+  // ============================================================================
+  // MAIN ROCKET MODEL
+  // ============================================================================
+  
+  model Rocket "Complete 6-DOF rocket with ECI integration and ECEF outputs"
+    
+    // ========== PARAMETERS ==========
+    
+    // Initial conditions in ECI frame
+    parameter Real r0_ECI[3] = {Constants.R_earth + 100e3, 0, 0} "Initial position ECI [m]";
+    parameter Real v0_ECI[3] = {0, 7500, 0} "Initial velocity ECI [m/s]";
+    parameter Real q0[4] = {1, 0, 0, 0} "Initial attitude quaternion (ECI to Body)";
+    parameter Real omega0_body[3] = {0, 0, 0} "Initial angular velocity body frame [rad/s]";
+    
+    // Reference time for ECEF transformations
+    parameter Real t0 = 0 "Reference epoch time [s]";
+    
+    // ========== COMPONENT MODELS ==========
+    
+    MassPropertiesModel mass_model;
+    ThrustModel thrust_model;
+    AerodynamicsModel aero_model;
+    
+    // ========== STATE VARIABLES (ECI frame) ==========
+    
+    // Position and velocity in ECI
+    Real r_ECI[3](start=r0_ECI, each fixed=true) "Position in ECI [m]";
+    Real v_ECI[3](start=v0_ECI, each fixed=true) "Velocity in ECI [m/s]";
+    
+    // Attitude quaternion (ECI to Body transformation)
+    Real q[4](start=q0, each fixed=true) "Quaternion [w,x,y,z] (ECI to Body)";
+    
+    // Angular velocity in body frame
+    Real omega_body[3](start=omega0_body, each fixed=true) "Angular velocity body [rad/s]";
+    
+    // ========== INTERMEDIATE VARIABLES ==========
+    
+    Real r_mag "Position magnitude [m]";
+    Real altitude "Altitude above sea level [m]";
+    Real rho "Air density [kg/m^3]";
+    Real q_dyn "Dynamic pressure [Pa]";
+    
+    // Rotation matrices
+    Real R_ECI_to_Body[3,3] "Rotation matrix from ECI to Body";
+    Real R_Body_to_ECI[3,3] "Rotation matrix from Body to ECI";
+    
+    // Velocity in body frame
+    Real v_body[3] "Velocity in body frame [m/s]";
+    
+    // Forces in ECI frame
+    Real F_gravity_ECI[3] "Gravity force in ECI [N]";
+    Real F_thrust_ECI[3] "Thrust force in ECI [N]";
+    Real F_aero_ECI[3] "Aerodynamic force in ECI [N]";
+    Real F_total_ECI[3] "Total force in ECI [N]";
+    
+    // Moments in body frame
+    Real M_total_body[3] "Total moment in body frame [N·m]";
+    
+    // Quaternion derivative helper
+    Real q_dot_omega[4] "Quaternion derivative from angular velocity";
+    
+    // Inertia matrix inverse (for angular acceleration)
+    Real I_inv[3,3] "Inverse of inertia tensor";
+    
+    // ========== OUTPUT VARIABLES (ECEF frame) ==========
+    
+    Real r_ECEF[3] "Position in ECEF [m]";
+    Real v_ECEF[3] "Velocity in ECEF [m/s]";
+    Real lat(unit="rad") "Latitude [rad]";
+    Real lon(unit="rad") "Longitude [rad]";
+    Real alt_geodetic "Altitude above WGS84 ellipsoid [m]";
+    Real euler_ECEF[3] "Euler angles in ECEF [yaw, pitch, roll] [rad]";
+    
+    // ========== COMMANDED INPUTS (to be connected) ==========
+    
+    input Real T_cmd = 0 "Commanded thrust magnitude [N]";
+    input Real u_thrust_cmd[3] = {1, 0, 0} "Commanded thrust direction in body frame";
+    
+  equation
+    // ========== MASS PROPERTIES ==========
+    
+    mass_model.m_dot_fuel = thrust_model.m_dot;
+    thrust_model.x_cm = mass_model.x_cm;
+    
+    // ========== POSITION MAGNITUDE AND ALTITUDE ==========
+    
+    r_mag = sqrt(r_ECI[1]^2 + r_ECI[2]^2 + r_ECI[3]^2);
+    altitude = r_mag - Constants.R_earth;
+    
+    // ========== ATMOSPHERE ==========
+    
+    rho = Atmosphere.density(altitude);
+    q_dyn = 0.5 * rho * (v_body[1]^2 + v_body[2]^2 + v_body[3]^2);
+    
+    // ========== ATTITUDE TRANSFORMATIONS ==========
+    
+    // Rotation matrices
+    R_ECI_to_Body = Transformations.quaternionToRotationMatrix(q);
+    R_Body_to_ECI = transpose(R_ECI_to_Body);
+    
+    // Velocity in body frame
+    v_body = R_ECI_to_Body * v_ECI;
+    
+    // ========== THRUST MODEL ==========
+    
+    thrust_model.T_cmd = T_cmd;
+    thrust_model.u_thrust_cmd = u_thrust_cmd;
+    
+    // ========== AERODYNAMICS ==========
+    
+    aero_model.v_body = v_body;
+    aero_model.omega_body = omega_body;
+    aero_model.altitude = altitude;
+    aero_model.q_dyn = q_dyn;
+    
+    // ========== FORCES IN ECI FRAME ==========
+    
+    // Gravity (point mass, in ECI)
+    F_gravity_ECI = -Constants.mu * mass_model.m_total * r_ECI / r_mag^3;
+    
+    // Thrust (transform from body to ECI)
+    F_thrust_ECI = R_Body_to_ECI * thrust_model.F_thrust;
+    
+    // Aerodynamics (transform from body to ECI)
+    F_aero_ECI = R_Body_to_ECI * aero_model.F_aero;
+    
+    // Total force
+    F_total_ECI = F_gravity_ECI + F_thrust_ECI + F_aero_ECI;
+    
+    // ========== TRANSLATIONAL DYNAMICS (ECI) ==========
+    
+    der(r_ECI) = v_ECI;
+    mass_model.m_total * der(v_ECI) = F_total_ECI;
+    
+    // ========== MOMENTS IN BODY FRAME ==========
+    
+    M_total_body = thrust_model.M_thrust + aero_model.M_aero;
+    
+    // ========== ROTATIONAL DYNAMICS ==========
+    
+    // Quaternion kinematics: q_dot = 0.5 * q ⊗ [0, omega_body]
+    q_dot_omega = 0.5 * Transformations.quaternionMultiply(q, {0, omega_body[1], omega_body[2], omega_body[3]});
+    der(q) = q_dot_omega;
+    
+    // Quaternion normalization constraint (optional, for numerical stability)
+    // This can be handled by re-normalizing periodically or using a constraint
+    // For now, we'll let it drift slightly; could add: 0 = q[1]^2 + q[2]^2 + q[3]^2 + q[4]^2 - 1;
+    
+    // Inverse of inertia tensor (for 3x3 symmetric matrix)
+    I_inv = Modelica.Math.Matrices.inv(mass_model.I_body);
+    
+    // Euler's rotation equation: I*omega_dot + omega × (I*omega) = M
+    // omega_dot = I^{-1} * (M - omega × (I*omega))
+    der(omega_body) = I_inv * (M_total_body - cross(omega_body, mass_model.I_body * omega_body));
+    
+    // ========== OUTPUTS IN ECEF ==========
+    
+    // Transform position to ECEF
+    r_ECEF = Transformations.ECItoECEF(r_ECI, time + t0);
+    
+    // Transform velocity to ECEF
+    v_ECEF = Transformations.velocityECItoECEF(r_ECI, v_ECI, time + t0);
+    
+    // Geodetic coordinates
+    (lat, lon, alt_geodetic) = Transformations.ECEFtoGeodetic(r_ECEF);
+    
+    // Euler angles (currently giving body orientation relative to ECI)
+    // To get orientation relative to ECEF, need to compose rotations
+    // For now, providing body orientation from quaternion
+    euler_ECEF = Transformations.quaternionToEuler(q);
+    
+  end Rocket;
+
+end Rocket6DOF;
