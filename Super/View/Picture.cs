@@ -36,10 +36,12 @@ namespace View
             GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
 
             CreateShaders();
+            CreateTextShader();
             CreateRocketModel();
             CreateFlameParticles();
             CreateLandingPad();
             CreateThrustVisualization();
+            CreateTextQuad();
         }
 
         protected void OnUnloadPicture()
@@ -54,9 +56,13 @@ namespace View
             GL.DeleteBuffer(padVBO);
             GL.DeleteBuffer(padEBO);
             GL.DeleteVertexArray(padVAO);
+            GL.DeleteBuffer(textVBO);
+            GL.DeleteVertexArray(textVAO);
+            GL.DeleteTexture(textTexture);
             GL.DeleteProgram(shaderProgram);
+            GL.DeleteProgram(textShaderProgram);
         }
-        
+
         private void CreateShaders()
         {
             string vertexShaderSource = @"
@@ -272,7 +278,7 @@ namespace View
                 Vector3.Normalize(thrustDirection) : new Vector3(0, 1, 0);
 
             const float gravity = 9.81f;
-            float meanMagnitude = gravity * 75000.0f;
+            float meanMagnitude = gravity * 27000.0f;
             float intensity = MathF.Min(thrustMagnitude / meanMagnitude, 2.0f);
 
             for (int i = 0; i < particleCount; i++)
@@ -304,7 +310,7 @@ namespace View
                 float alpha = (1.05f - t) * intensity * 2;
 
                 int idx = i * 9;
-                flameVertices[idx    ] = particlePos.X;
+                flameVertices[idx] = particlePos.X;
                 flameVertices[idx + 1] = particlePos.Y;
                 flameVertices[idx + 2] = particlePos.Z;
                 flameVertices[idx + 3] = thrustDir.X;
@@ -453,8 +459,11 @@ namespace View
                 GL.DrawArrays(PrimitiveType.Points, 0, particleCount);
             }
 
+            // Render and draw telemetry overlay
+            RenderTelemetryText();
+            DrawTelemetryOverlay();
+
             SwapBuffers();
         }
-
     }
 }
