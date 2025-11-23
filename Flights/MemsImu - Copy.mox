@@ -1,0 +1,345 @@
+within Flights;
+
+package MemsImu "MEMS IMU Model with Earth Effects and Coriolis"
+  extends Modelica.Icons.Package;
+
+  model IMU "IMU with Complete Navigation Equations"
+    import Modelica.Constants.pi;
+    //import SI = Modelica.Units.SI;
+    
+    // inputs
+    input  Real acc_BDY[3];
+    input  Real omega_BDY[3];
+
+    // outputs
+    output Real pos_NED[3];
+    output Real vel_NED[3];
+    output Real euler_NED[3] "Roll Pitch Yaw";
+    output Real roll;
+    output Real pitch;
+    output Real yaw;
+
+    // initial
+    parameter Real vel0[3] = {0,0,0};
+    parameter Real pos0[3] = {0,0,0};
+    parameter Real q0[4] = {sqrt(0.5), 0, sqrt(0.5), 0};
+    parameter Real lla0[3] = {0,0,0};
+
+    parameter Real pos0_ECEF[3] = Constants.pos0_ECEF; // Transformations.pos_WGS_to_ECEF(0,0,0);
+    Real pos_ECI[3](start=Transformations.position_NED_to_ECI({0,0,0}, 0, pos0_ECEF));
+    Real for_gravity_ECI[3];
+  // state
+
+    /*
+    // Input connectors
+    Modelica.Blocks.Interfaces.RealInput accel_x(unit="m/s2")       "Body frame X specific force" annotation (Placement(transformation(extent={{-140,60},{-100,100}})));
+    Modelica.Blocks.Interfaces.RealInput accel_y(unit="m/s2")       "Body frame Y specific force" annotation (Placement(transformation(extent={{-140,20},{-100,60}})));
+    Modelica.Blocks.Interfaces.RealInput accel_z(unit="m/s2")       "Body frame Z specific force" annotation (Placement(transformation(extent={{-140,-20},{-100,20}})));
+    
+    Modelica.Blocks.Interfaces.RealInput gyro_x(unit="rad/s")       "Body frame X angular rate" annotation (Placement(transformation(extent={{-140,-60},{-100,-20}})));
+    Modelica.Blocks.Interfaces.RealInput gyro_y(unit="rad/s")       "Body frame Y angular rate" annotation (Placement(transformation(extent={{-140,-100},{-100,-60}})));
+    Modelica.Blocks.Interfaces.RealInput gyro_z(unit="rad/s")       "Body frame Z angular rate" annotation (Placement(transformation(extent={{-140,-140},{-100,-100}})));
+    
+    // Output connectors - Position
+    Modelica.Blocks.Interfaces.RealOutput pos_north(unit="m")       "North position" annotation (Placement(transformation(extent={{100,70},{120,90}})));
+    Modelica.Blocks.Interfaces.RealOutput pos_east(unit="m")       "East position" annotation (Placement(transformation(extent={{100,50},{120,70}})));
+    Modelica.Blocks.Interfaces.RealOutput pos_down(unit="m")       "Down position (height negative)" annotation (Placement(transformation(extent={{100,30},{120,50}})));
+    
+    // Output connectors - Velocity
+    Modelica.Blocks.Interfaces.RealOutput vel_north(unit="m/s")       "North velocity" annotation (Placement(transformation(extent={{100,0},{120,20}})));
+    Modelica.Blocks.Interfaces.RealOutput vel_east(unit="m/s")       "East velocity" annotation (Placement(transformation(extent={{100,-20},{120,0}})));
+    Modelica.Blocks.Interfaces.RealOutput vel_down(unit="m/s")       "Down velocity" annotation (Placement(transformation(extent={{100,-40},{120,-20}})));
+    
+    // Output connectors - Euler Angles
+    Modelica.Blocks.Interfaces.RealOutput roll(unit="rad")       "Roll angle" annotation (Placement(transformation(extent={{100,-70},{120,-50}})));
+    Modelica.Blocks.Interfaces.RealOutput pitch(unit="rad")       "Pitch angle" annotation (Placement(transformation(extent={{100,-90},{120,-70}})));
+    Modelica.Blocks.Interfaces.RealOutput yaw(unit="rad")       "Yaw angle" annotation (Placement(transformation(extent={{100,-110},{120,-90}})));
+    
+    // Parameters
+    parameter Real q0_init[4] = {1,0,0,0} "Initial quaternion [q0,q1,q2,q3]";
+    parameter Real v_init[3] = {0,0,0} "Initial NED velocity [m/s]";
+    parameter Real pos_init[3] = {0,0,0} "Initial NED position [m]";
+    parameter Real latitude_init(unit="rad") = 0.0 "Initial latitude [rad]";
+    parameter Real longitude_init(unit="rad") = 0.0 "Initial longitude [rad]";
+    parameter Real altitude_init(unit="m") = 0.0 "Initial altitude [m]";
+    */
+    
+    // Earth model parameters
+    parameter Real R_0 = 6378137.0 "Earth equatorial radius [m]";
+    parameter Real e = 0.0818191908426 "Earth eccentricity";
+    parameter Real omega_ie = 7.292115e-5 "Earth rotation rate [rad/s]";
+    parameter Real g_0 = 9.7803253359 "Gravity at equator [m/s2]";
+    parameter Real g_pole = 9.8321849378 "Gravity at poles [m/s2]";
+    
+    // State variables
+    Real q[4](start=q0, each fixed=true) "Attitude quaternion [q0,q1,q2,q3]";
+    Real v[3](start=vel0, each fixed=true) "NED velocity [m/s]";
+    Real lla[3](start=lla0, each fixed=true);
+    //Real latitude(start=latitude_init, fixed=true, unit="rad") "Latitude [rad]";
+    //Real longitude(start=longitude_init, fixed=true, unit="rad") "Longitude [rad]";
+    //Real altitude(start=altitude_init, fixed=true, unit="m") "Altitude above ellipsoid [m]";
+    
+    // Internal variables
+    Real omega_body[3] "Body angular rates [rad/s]";
+    Real f_body[3] "Body frame specific force [m/s2]";
+    Real f_ned[3] "NED frame specific force [m/s2]";
+    Real a_ned[3] "NED frame acceleration [m/s2]";
+    Real q_norm "Quaternion norm for normalization";
+    
+    // Earth-related terms
+    Real R_N "Meridian radius of curvature [m]";
+    Real R_E "Transverse radius of curvature [m]";
+    Real g_ned[3] "Gravity vector in NED [m/s2]";
+    Real g_magnitude "Local gravity magnitude [m/s2]";
+    Real omega_ie_ned[3] "Earth rotation rate in NED [rad/s]";
+    Real omega_en_ned[3] "Transport rate in NED [rad/s]";
+    Real omega_in_ned[3] "Total frame rotation rate [rad/s]";
+    Real coriolis[3] "Coriolis acceleration [m/s2]";
+    Real centrifugal[3] "Centrifugal acceleration due to transport [m/s2]";
+    
+    // Quaternion correction for Earth rotation
+    Real omega_correction_body[3] "Frame rate correction in body frame [rad/s]";
+    
+  equation
+    pos_ECI = Transformations.position_NED_to_ECI({0,0,0}, 0, pos0_ECEF);
+    for_gravity_ECI = -3.986004418e14 * pos_ECI / (sqrt(pos_ECI*pos_ECI))^3;    // Gravity (computed in ECI)
+    g_ned = Transformations.force_ECI_to_NED(for_gravity_ECI, time, pos0_ECEF);
+  // Input assignments
+    f_body = acc_BDY;
+    omega_body = omega_BDY;
+    
+    // Calculate Earth radii of curvature
+    R_N = R_0 * (1 - e^2) / (1 - e^2 * sin(lla[1])^2)^1.5;
+    R_E = R_0 / sqrt(1 - e^2 * sin(lla[1])^2);
+    
+    // Earth rotation rate in NED frame
+    omega_ie_ned[1] = omega_ie * cos(lla[1]);  // North
+    omega_ie_ned[2] = 0;                          // East
+    omega_ie_ned[3] = -omega_ie * sin(lla[1]); // Down
+    
+    // Transport rate (rate of NED frame due to motion over Earth)
+    omega_en_ned[1] = v[2] / (R_E + lla[3]);                    // Due to East velocity
+    omega_en_ned[2] = -v[1] / (R_N + lla[3]);                   // Due to North velocity
+    omega_en_ned[3] = -v[2] * tan(lla[1]) / (R_E + lla[3]);   // Due to East velocity and latitude
+    
+    // Total frame rotation rate
+    omega_in_ned = {0,0,0}; // ###### omega_ie_ned + omega_en_ned;
+    
+    // Transform frame rate to body frame for quaternion correction
+    omega_correction_body = nedToBody(q/q_norm, omega_in_ned);
+    
+    // Quaternion kinematics (corrected for Earth rotation and transport rate)
+    der(q[1]) = 0.5*(-(omega_body[1]-omega_correction_body[1])*q[2] 
+                     -(omega_body[2]-omega_correction_body[2])*q[3] 
+                     -(omega_body[3]-omega_correction_body[3])*q[4]);
+    der(q[2]) = 0.5*((omega_body[1]-omega_correction_body[1])*q[1] 
+                    +(omega_body[3]-omega_correction_body[3])*q[3] 
+                    -(omega_body[2]-omega_correction_body[2])*q[4]);
+    der(q[3]) = 0.5*((omega_body[2]-omega_correction_body[2])*q[1] 
+                    -(omega_body[3]-omega_correction_body[3])*q[2] 
+                    +(omega_body[1]-omega_correction_body[1])*q[4]);
+    der(q[4]) = 0.5*((omega_body[3]-omega_correction_body[3])*q[1] 
+                    +(omega_body[2]-omega_correction_body[2])*q[2] 
+                    -(omega_body[1]-omega_correction_body[1])*q[3]);
+    
+    // Quaternion normalization
+    q_norm = sqrt(q[1]^2 + q[2]^2 + q[3]^2 + q[4]^2);
+    
+    // Transform body frame accelerations to NED frame
+    f_ned = quaternionToNED(q/q_norm, f_body);
+    
+    // Gravity model (Somigliana formula with free-air correction)
+    g_magnitude = g_0 * (1 + 0.00193185138639*sin(lla[1])^2) / sqrt(1 - e^2*sin(lla[1])^2) - 3.086e-6 * lla[3];
+//    g_ned[1] = 0;
+//    g_ned[2] = 0;
+//    g_ned[3] = 0; // ###### g_magnitude;
+    
+    // Coriolis acceleration (2 * omega_ie x v)
+    coriolis = cross(2*omega_ie_ned, v);
+    
+    // Centrifugal acceleration due to transport rate
+    centrifugal = cross(omega_en_ned, v);
+    
+    // Total NED acceleration
+    a_ned = f_ned; // #######  + g_ned - coriolis - centrifugal;
+    
+    // Velocity integration
+    der(v) = a_ned;
+    
+    // Position integration (geodetic)
+    der(lla[1]) = v[1] / (R_N + lla[3]);
+    der(lla[2]) = v[2] / ((R_E + lla[3]) * cos(lla[1]));
+    der(lla[3]) = -v[3];  // Down is positive in NED
+    
+    // Convert geodetic position to local NED for output
+    pos_NED[1] = (lla[1] - lla0[1]) * (R_N + lla[3]);
+    pos_NED[2] = (lla[2] - lla0[2]) * (R_E + lla[3]) * cos(lla[1]);
+    pos_NED[3] = -(lla[3] - lla0[3]);
+    
+    // Output assignments
+    vel_NED = v;
+    
+    // Convert quaternion to Euler angles
+    (roll, pitch, yaw) = quaternionToEuler(q/q_norm);
+    //roll = 0;
+    //pitch = 0;
+    //yaw = 0;
+    euler_NED = {roll,pitch,yaw};
+    
+  end IMU;
+
+  function quaternionToNED "Transform body frame vector to NED frame using quaternion"
+    input Real q[4] "Normalized quaternion [q0,q1,q2,q3]";
+    input Real v_body[3] "Vector in body frame";
+    output Real v_ned[3] "Vector in NED frame";
+  protected
+    Real q0, q1, q2, q3;
+    Real R[3,3] "Rotation matrix from body to NED";
+  algorithm
+    q0 := q[1];
+    q1 := q[2];
+    q2 := q[3];
+    q3 := q[4];
+    
+    // Direction Cosine Matrix (DCM) from body to NED
+    R[1,1] := q0^2 + q1^2 - q2^2 - q3^2;
+    R[1,2] := 2*(q1*q2 + q0*q3);
+    R[1,3] := 2*(q1*q3 - q0*q2);
+    
+    R[2,1] := 2*(q1*q2 - q0*q3);
+    R[2,2] := q0^2 - q1^2 + q2^2 - q3^2;
+    R[2,3] := 2*(q2*q3 + q0*q1);
+    
+    R[3,1] := 2*(q1*q3 + q0*q2);
+    R[3,2] := 2*(q2*q3 - q0*q1);
+    R[3,3] := q0^2 - q1^2 - q2^2 + q3^2;
+    
+    // Direction Cosine Matrix (DCM) from body to NED
+    R[1,1] := q0^2 + q1^2 - q2^2 - q3^2;
+    R[1,2] := 2*(q1*q2 - q0*q3);
+    R[1,3] := 2*(q1*q3 + q0*q2);
+    
+    R[2,1] := 2*(q1*q2 + q0*q3);
+    R[2,2] := q0^2 - q1^2 + q2^2 - q3^2;
+    R[2,3] := 2*(q2*q3 - q0*q1);
+    
+    R[3,1] := 2*(q1*q3 - q0*q2);
+    R[3,2] := 2*(q2*q3 + q0*q1);
+    R[3,3] := q0^2 - q1^2 - q2^2 + q3^2;
+    
+
+    // Transform vector
+    v_ned := R * v_body;
+  end quaternionToNED;
+
+  function nedToBody "Transform NED frame vector to body frame using quaternion"
+    input Real q[4] "Normalized quaternion [q0,q1,q2,q3]";
+    input Real v_ned[3] "Vector in NED frame";
+    output Real v_body[3] "Vector in body frame";
+  protected
+    Real q0, q1, q2, q3;
+    Real R[3,3] "Rotation matrix from NED to body (transpose of body to NED)";
+  algorithm
+    q0 := q[1];
+    q1 := q[2];
+    q2 := q[3];
+    q3 := q[4];
+    
+    // Direction Cosine Matrix (DCM) from NED to body (transpose)
+    R[1,1] := q0^2 + q1^2 - q2^2 - q3^2;
+    R[1,2] := 2*(q1*q2 - q0*q3);
+    R[1,3] := 2*(q1*q3 + q0*q2);
+    
+    R[2,1] := 2*(q1*q2 + q0*q3);
+    R[2,2] := q0^2 - q1^2 + q2^2 - q3^2;
+    R[2,3] := 2*(q2*q3 - q0*q1);
+    
+    R[3,1] := 2*(q1*q3 - q0*q2);
+    R[3,2] := 2*(q2*q3 + q0*q1);
+    R[3,3] := q0^2 - q1^2 - q2^2 + q3^2;
+    
+    // Transform vector
+    v_body := R * v_ned;
+  end nedToBody;
+
+  function quaternionToEuler "Convert quaternion to Euler angles (roll, pitch, yaw)"
+    input Real q[4] "Normalized quaternion [q0,q1,q2,q3]";
+    output Real roll(unit="rad") "Roll angle";
+    output Real pitch(unit="rad") "Pitch angle";
+    output Real yaw(unit="rad") "Yaw angle";
+  protected
+    Real q0, q1, q2, q3, qq;
+  algorithm
+    q0 := q[1];
+    q1 := q[2];
+    q2 := q[3];
+    q3 := q[4];
+    qq := q[1]^2 + q[2]^2 + q[3]^2 + q[4]^2;
+
+    
+    // Euler angles from quaternion (ZYX convention: yaw-pitch-roll)
+    roll := atan2(2*(q0*q1 + q2*q3)/qq, 1 - 2*(q1^2 + q2^2)/qq);
+    pitch := asin(2*(q0*q2 - q3*q1)/qq);
+    yaw := atan2(2*(q0*q3 + q1*q2)/qq, 1 - 2*(q2^2 + q3^2)/qq);
+  end quaternionToEuler;
+
+  function cross "Cross product of two 3D vectors"
+    input Real a[3];
+    input Real b[3];
+    output Real c[3];
+  algorithm
+    c[1] := a[2]*b[3] - a[3]*b[2];
+    c[2] := a[3]*b[1] - a[1]*b[3];
+    c[3] := a[1]*b[2] - a[2]*b[1];
+  end cross;
+
+  model TestIMU "Test case for IMU with Earth effects"
+    extends Modelica.Icons.Example;
+    import Modelica.Constants.pi;
+
+    IMU imu;
+    
+    /*
+//    IMU imu(
+//      q0_init={1,0,0,0},
+//      v_init={100,0,0},  // 100 m/s North
+//      pos_init={0,0,0},
+//      lla0={0,0,0});
+//      latitude_init=45*pi/180,  // 45 degrees North
+//      longitude_init=0,
+//      altitude_init=1000)  // 1000 m altitude
+//      annotation (Placement(transformation(extent={{-10,-10},{10,10}})));
+    
+    // Constant accelerations (1g upward in body frame to balance gravity)
+    Modelica.Blocks.Sources.Constant accel_x(k=0)
+      annotation (Placement(transformation(extent={{-60,60},{-40,80}})));
+    Modelica.Blocks.Sources.Constant accel_y(k=0)
+      annotation (Placement(transformation(extent={{-60,30},{-40,50}})));
+    Modelica.Blocks.Sources.Constant accel_z(k=-9.8)
+      annotation (Placement(transformation(extent={{-60,0},{-40,20}})));
+    
+    // Small rotation rates to test gyro integration
+    Modelica.Blocks.Sources.Constant gyro_x(k=0.01)
+      annotation (Placement(transformation(extent={{-60,-30},{-40,-10}})));
+    Modelica.Blocks.Sources.Constant gyro_y(k=0)
+      annotation (Placement(transformation(extent={{-60,-60},{-40,-40}})));
+    Modelica.Blocks.Sources.Constant gyro_z(k=0)
+      annotation (Placement(transformation(extent={{-60,-90},{-40,-70}})));
+    */
+    
+  equation
+    imu.acc_BDY = {9.78,0,0};
+    imu.omega_BDY = {0,0,0};
+    /*
+    connect(accel_x.y, imu.accel_x);
+    connect(accel_y.y, imu.accel_y);
+    connect(accel_z.y, imu.accel_z);
+    connect(gyro_x.y, imu.gyro_x);
+    connect(gyro_y.y, imu.gyro_y);
+    connect(gyro_z.y, imu.gyro_z);
+    */
+    annotation(experiment(StartTime=0, StopTime=200, Interval=0.010));
+  
+  end TestIMU;
+
+end MemsImu;
