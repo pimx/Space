@@ -22,7 +22,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
   
   package QuaternionOps "Quaternion operations"
     
-    function normalize "Normalize quaternion to unit length"
+    pure function normalize "Normalize quaternion to unit length"
       input Types.Quaternion q_in;
       output Types.Quaternion q_out;
     protected
@@ -32,14 +32,14 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       q_out := q_in / norm;
     end normalize;
     
-    function conjugate "Quaternion conjugate (inverse for unit quaternions)"
+    pure function conjugate "Quaternion conjugate (inverse for unit quaternions)"
       input Types.Quaternion q;
       output Types.Quaternion q_conj;
     algorithm
       q_conj := {q[1], -q[2], -q[3], -q[4]};
     end conjugate;
     
-    function multiply "Quaternion multiplication: q1 * q2"
+    pure function multiply "Quaternion multiplication: q1 * q2"
       input Types.Quaternion q1;
       input Types.Quaternion q2;
       output Types.Quaternion q_out;
@@ -50,7 +50,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       q_out[4] := q1[1]*q2[4] + q1[2]*q2[3] - q1[3]*q2[2] + q1[4]*q2[1];
     end multiply;
     
-    function rotateVector "Rotate vector by quaternion: q * v * q'"
+    pure function rotateVector "Rotate vector by quaternion: q * v * q'"
       input Types.Quaternion q;
       input Types.Vector3D v;
       output Types.Vector3D v_rot;
@@ -76,7 +76,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       v_rot := {q_result[2], q_result[3], q_result[4]};
     end rotateVector;
     
-    function toRotationMatrix "Convert quaternion to rotation matrix"
+    pure function toRotationMatrix "Convert quaternion to rotation matrix"
       input Types.Quaternion q;
       output Types.RotationMatrix R;
     protected
@@ -99,7 +99,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       R[3,3] := w2 - x2 - y2 + z2;
     end toRotationMatrix;
     
-    function fromRotationMatrix "Convert rotation matrix to quaternion"
+    pure function fromRotationMatrix "Convert rotation matrix to quaternion"
       input Types.RotationMatrix R;
       output Types.Quaternion q;
     protected
@@ -137,7 +137,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       q := normalize(q);
     end fromRotationMatrix;
     
-    function derivative "Compute quaternion derivative from angular velocity"
+    pure function derivative "Compute quaternion derivative from angular velocity"
       input Types.Quaternion q "Current quaternion";
       input Types.Vector3D omega "Angular velocity in body frame [rad/s]";
       output Types.Quaternion q_dot "Quaternion derivative";
@@ -156,9 +156,32 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
     
   end QuaternionOps;
   
+  package VectorTransforms "Position transformations"
+
+    pure function ECEF_to_BODY "Transform vector from ECEF to BODY"
+      input Types.Vector3D r_ecef "Vector in ECEF frame [m]";
+      input Types.Quaternion q_body_ecef "Quaternion from ECEF to BODY";
+      output Types.Vector3D r_body "Vector in BODY frame [m]";
+    algorithm
+      r_body := QuaternionOps.rotateVector(q_body_ecef, r_ecef);
+    end ECEF_to_BODY;
+    
+    pure function BODY_to_ECEF "Transform vector from BODY to ECEF"
+      input Types.Vector3D r_body "Vector in BODY frame [m]";
+      input Types.Quaternion q_body_ecef "Quaternion from ECEF to BODY";
+      output Types.Vector3D r_ecef "Vector in ECEF frame [m]";
+    protected
+      Types.Quaternion q_ecef_body;
+    algorithm
+      q_ecef_body := QuaternionOps.conjugate(q_body_ecef);
+      r_ecef := QuaternionOps.rotateVector(q_ecef_body, r_body);
+    end BODY_to_ECEF;
+
+  end VectorTransforms;
+
   package PositionTransforms "Position transformations"
     
-    function ECI_to_ECEF "Transform position from ECI to ECEF"
+    pure function ECI_to_ECEF "Transform position from ECI to ECEF"
       input Types.Vector3D r_eci "Position in ECI frame [m]";
       input Real theta "Earth rotation angle [rad]";
       output Types.Vector3D r_ecef "Position in ECEF frame [m]";
@@ -173,7 +196,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       r_ecef[3] := r_eci[3];
     end ECI_to_ECEF;
     
-    function ECEF_to_ECI "Transform position from ECEF to ECI"
+    pure function ECEF_to_ECI "Transform position from ECEF to ECI"
       input Types.Vector3D r_ecef "Position in ECEF frame [m]";
       input Real theta "Earth rotation angle [rad]";
       output Types.Vector3D r_eci "Position in ECI frame [m]";
@@ -188,7 +211,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       r_eci[3] := r_ecef[3];
     end ECEF_to_ECI;
     
-    function ECEF_to_BODY "Transform position from ECEF to BODY"
+    pure function ECEF_to_BODY "Transform position from ECEF to BODY"
       input Types.Vector3D r_ecef "Position in ECEF frame [m]";
       input Types.Quaternion q_body_ecef "Quaternion from ECEF to BODY";
       output Types.Vector3D r_body "Position in BODY frame [m]";
@@ -196,7 +219,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       r_body := QuaternionOps.rotateVector(q_body_ecef, r_ecef);
     end ECEF_to_BODY;
     
-    function BODY_to_ECEF "Transform position from BODY to ECEF"
+    pure function BODY_to_ECEF "Transform position from BODY to ECEF"
       input Types.Vector3D r_body "Position in BODY frame [m]";
       input Types.Quaternion q_body_ecef "Quaternion from ECEF to BODY";
       output Types.Vector3D r_ecef "Position in ECEF frame [m]";
@@ -207,7 +230,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       r_ecef := QuaternionOps.rotateVector(q_ecef_body, r_body);
     end BODY_to_ECEF;
     
-    function ECI_to_BODY "Transform position from ECI to BODY"
+    pure function ECI_to_BODY "Transform position from ECI to BODY"
       input Types.Vector3D r_eci "Position in ECI frame [m]";
       input Types.Quaternion q_body_ecef "Quaternion from ECEF to BODY";
       input Real theta "Earth rotation angle [rad]";
@@ -219,7 +242,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       r_body := ECEF_to_BODY(r_ecef, q_body_ecef);
     end ECI_to_BODY;
     
-    function BODY_to_ECI "Transform position from BODY to ECI"
+    pure function BODY_to_ECI "Transform position from BODY to ECI"
       input Types.Vector3D r_body "Position in BODY frame [m]";
       input Types.Quaternion q_body_ecef "Quaternion from ECEF to BODY";
       input Real theta "Earth rotation angle [rad]";
@@ -235,7 +258,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
   
   package VelocityTransforms "Velocity transformations"
     
-    function ECI_to_ECEF "Transform velocity from ECI to ECEF (rotating frame)"
+    pure function ECI_to_ECEF "Transform velocity from ECI to ECEF (rotating frame)"
       input Types.Vector3D v_eci "Velocity in ECI frame [m/s]";
       input Types.Vector3D r_eci "Position in ECI frame [m]";
       input Real theta "Earth rotation angle [rad]";
@@ -261,7 +284,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       v_ecef[3] := v_transport[3];
     end ECI_to_ECEF;
     
-    function ECEF_to_ECI "Transform velocity from ECEF to ECI (rotating frame)"
+    pure function ECEF_to_ECI "Transform velocity from ECEF to ECI (rotating frame)"
       input Types.Vector3D v_ecef "Velocity in ECEF frame [m/s]";
       input Types.Vector3D r_ecef "Position in ECEF frame [m]";
       input Real theta "Earth rotation angle [rad]";
@@ -284,7 +307,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       v_eci[3] := v_temp[3];
     end ECEF_to_ECI;
     
-    function ECEF_to_BODY "Transform velocity from ECEF to BODY (rotating frame)"
+    pure function ECEF_to_BODY "Transform velocity from ECEF to BODY (rotating frame)"
       input Types.Vector3D v_ecef "Velocity in ECEF frame [m/s]";
       input Types.Vector3D r_ecef "Position in ECEF frame [m]";
       input Types.Quaternion q_body_ecef "Quaternion from ECEF to BODY";
@@ -308,7 +331,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       v_body := v_transport - omega_cross_r;
     end ECEF_to_BODY;
     
-    function BODY_to_ECEF "Transform velocity from BODY to ECEF (rotating frame)"
+    pure function BODY_to_ECEF "Transform velocity from BODY to ECEF (rotating frame)"
       input Types.Vector3D v_body "Velocity in BODY frame [m/s]";
       input Types.Vector3D r_body "Position in BODY frame [m]";
       input Types.Quaternion q_body_ecef "Quaternion from ECEF to BODY";
@@ -334,7 +357,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
   
   package AccelerationTransforms "Acceleration transformations"
     
-    function ECI_to_ECEF "Transform acceleration from ECI to ECEF (rotating frame)"
+    pure function ECI_to_ECEF "Transform acceleration from ECI to ECEF (rotating frame)"
       input Types.Vector3D a_eci "Acceleration in ECI frame [m/s^2]";
       input Types.Vector3D v_eci "Velocity in ECI frame [m/s]";
       input Types.Vector3D r_eci "Position in ECI frame [m]";
@@ -375,7 +398,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       a_ecef[3] := a_transport[3];
     end ECI_to_ECEF;
     
-    function ECEF_to_ECI "Transform acceleration from ECEF to ECI (rotating frame)"
+    pure function ECEF_to_ECI "Transform acceleration from ECEF to ECI (rotating frame)"
       input Types.Vector3D a_ecef "Acceleration in ECEF frame [m/s^2]";
       input Types.Vector3D v_ecef "Velocity in ECEF frame [m/s]";
       input Types.Vector3D r_ecef "Position in ECEF frame [m]";
@@ -401,7 +424,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       a_eci[3] := a_temp[3];
     end ECEF_to_ECI;
     
-    function ECEF_to_BODY "Transform acceleration from ECEF to BODY (rotating frame)"
+    pure function ECEF_to_BODY "Transform acceleration from ECEF to BODY (rotating frame)"
       input Types.Vector3D a_ecef "Acceleration in ECEF frame [m/s^2]";
       input Types.Vector3D v_ecef "Velocity in ECEF frame [m/s]";
       input Types.Vector3D r_ecef "Position in ECEF frame [m]";
@@ -439,7 +462,46 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       a_body := a_transport + coriolis + centrifugal + euler;
     end ECEF_to_BODY;
     
-    function BODY_to_ECEF "Transform acceleration from BODY to ECEF (rotating frame)"
+    
+    pure function ECEF_to_BODY2 "Transform acceleration from ECEF to BODY (rotating frame)"
+      input Types.Vector3D a_ecef "Acceleration in ECEF frame [m/s^2]";
+      input Types.Vector3D v_body "Velocity in ECEF frame [m/s]";
+      input Types.Vector3D r_body "Position in ECEF frame [m]";
+      input Types.Quaternion q_body_ecef "Quaternion from ECEF to BODY";
+      input Types.Vector3D omega_body_ecef "Angular velocity of BODY w.r.t. ECEF in BODY frame [rad/s]";
+      input Types.Vector3D alpha_body_ecef "Angular acceleration of BODY w.r.t. ECEF in BODY frame [rad/s^2]";
+      output Types.Vector3D a_body "Acceleration in BODY frame [m/s^2]";
+    protected
+      Types.Vector3D a_transport;
+//      Types.Vector3D v_body;
+//      Types.Vector3D r_body;
+      Types.Vector3D coriolis;
+      Types.Vector3D centrifugal;
+      Types.Vector3D euler;
+    algorithm
+      // Rotate acceleration to BODY frame
+      a_transport := QuaternionOps.rotateVector(q_body_ecef, a_ecef);
+      
+      // Rotate velocity to BODY frame
+      //v_body := QuaternionOps.rotateVector(q_body_ecef, v_ecef);
+      
+      // Rotate position to BODY frame
+      //r_body := QuaternionOps.rotateVector(q_body_ecef, r_ecef);
+      
+      // Coriolis acceleration: -2*omega x v
+      coriolis := -2.0 * cross(omega_body_ecef, v_body);
+      
+      // Centrifugal acceleration: -omega x (omega x r)
+      centrifugal := -cross(omega_body_ecef, cross(omega_body_ecef, r_body));
+      
+      // Euler acceleration: -alpha x r
+      euler := -cross(alpha_body_ecef, r_body);
+      
+      // Total acceleration in BODY frame
+      a_body := a_transport + coriolis + centrifugal + euler;
+    end ECEF_to_BODY2;
+
+    pure function BODY_to_ECEF "Transform acceleration from BODY to ECEF (rotating frame)"
       input Types.Vector3D a_body "Acceleration in BODY frame [m/s^2]";
       input Types.Vector3D v_body "Velocity in BODY frame [m/s]";
       input Types.Vector3D r_body "Position in BODY frame [m]";
@@ -475,7 +537,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
   
   package AngularVelocityTransforms "Angular velocity transformations"
     
-    function ECEF_to_BODY "Transform angular velocity from ECEF to BODY"
+    pure function ECEF_to_BODY "Transform angular velocity from ECEF to BODY"
       input Types.Vector3D omega_ecef "Angular velocity in ECEF frame [rad/s]";
       input Types.Quaternion q_body_ecef "Quaternion from ECEF to BODY";
       output Types.Vector3D omega_body "Angular velocity in BODY frame [rad/s]";
@@ -483,7 +545,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       omega_body := QuaternionOps.rotateVector(q_body_ecef, omega_ecef);
     end ECEF_to_BODY;
     
-    function BODY_to_ECEF "Transform angular velocity from BODY to ECEF"
+    pure function BODY_to_ECEF "Transform angular velocity from BODY to ECEF"
       input Types.Vector3D omega_body "Angular velocity in BODY frame [rad/s]";
       input Types.Quaternion q_body_ecef "Quaternion from ECEF to BODY";
       output Types.Vector3D omega_ecef "Angular velocity in ECEF frame [rad/s]";
@@ -494,7 +556,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       omega_ecef := QuaternionOps.rotateVector(q_ecef_body, omega_body);
     end BODY_to_ECEF;
     
-    function ECI_to_ECEF "Transform angular velocity from ECI to ECEF"
+    pure function ECI_to_ECEF "Transform angular velocity from ECI to ECEF"
       input Types.Vector3D omega_eci "Angular velocity in ECI frame [rad/s]";
       input Real theta "Earth rotation angle [rad]";
       output Types.Vector3D omega_ecef "Angular velocity in ECEF frame (includes Earth rotation) [rad/s]";
@@ -514,7 +576,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       omega_ecef := omega_rot - Constants.omega_earth_vector;
     end ECI_to_ECEF;
     
-    function ECEF_to_ECI "Transform angular velocity from ECEF to ECI"
+    pure function ECEF_to_ECI "Transform angular velocity from ECEF to ECI"
       input Types.Vector3D omega_ecef "Angular velocity in ECEF frame [rad/s]";
       input Real theta "Earth rotation angle [rad]";
       output Types.Vector3D omega_eci "Angular velocity in ECI frame [rad/s]";
@@ -534,7 +596,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       omega_eci[3] := omega_temp[3];
     end ECEF_to_ECI;
     
-    function relativeBodyECEF "Compute relative angular velocity of BODY w.r.t. ECEF"
+    pure function relativeBodyECEF "Compute relative angular velocity of BODY w.r.t. ECEF"
       input Types.Vector3D omega_body_eci "Angular velocity of BODY w.r.t. ECI in BODY frame [rad/s]";
       input Types.Quaternion q_body_ecef "Quaternion from ECEF to BODY";
       output Types.Vector3D omega_body_ecef "Angular velocity of BODY w.r.t. ECEF in BODY frame [rad/s]";
@@ -552,7 +614,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
   
   package AngularAccelerationTransforms "Angular acceleration transformations"
     
-    function ECEF_to_BODY "Transform angular acceleration from ECEF to BODY"
+    pure function ECEF_to_BODY "Transform angular acceleration from ECEF to BODY"
       input Types.Vector3D alpha_ecef "Angular acceleration in ECEF frame [rad/s^2]";
       input Types.Quaternion q_body_ecef "Quaternion from ECEF to BODY";
       input Types.Vector3D ignored_omega_body_ecef  "Angular velocity of BODY w.r.t. ECEF in BODY frame [rad/s]";
@@ -570,7 +632,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       alpha_body := alpha_transport;
     end ECEF_to_BODY;
     
-    function BODY_to_ECEF "Transform angular acceleration from BODY to ECEF"
+    pure function BODY_to_ECEF "Transform angular acceleration from BODY to ECEF"
       input Types.Vector3D alpha_body "Angular acceleration in BODY frame [rad/s^2]";
       input Types.Quaternion q_body_ecef "Quaternion from ECEF to BODY";
       output Types.Vector3D alpha_ecef "Angular acceleration in ECEF frame [rad/s^2]";
@@ -581,7 +643,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       alpha_ecef := QuaternionOps.rotateVector(q_ecef_body, alpha_body);
     end BODY_to_ECEF;
     
-    function ECI_to_ECEF "Transform angular acceleration from ECI to ECEF"
+    pure function ECI_to_ECEF "Transform angular acceleration from ECI to ECEF"
       input Types.Vector3D alpha_eci "Angular acceleration in ECI frame [rad/s^2]";
       input Real theta "Earth rotation angle [rad]";
       output Types.Vector3D alpha_ecef "Angular acceleration in ECEF frame [rad/s^2]";
@@ -597,7 +659,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       alpha_ecef[3] := alpha_eci[3];
     end ECI_to_ECEF;
     
-    function ECEF_to_ECI "Transform angular acceleration from ECEF to ECI"
+    pure function ECEF_to_ECI "Transform angular acceleration from ECEF to ECI"
       input Types.Vector3D alpha_ecef "Angular acceleration in ECEF frame [rad/s^2]";
       input Real theta "Earth rotation angle [rad]";
       output Types.Vector3D alpha_eci "Angular acceleration in ECI frame [rad/s^2]";
@@ -616,7 +678,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
   
   package Utilities "Utility functions"
     
-    function cross "Cross product of two 3D vectors"
+    pure function cross "Cross product of two 3D vectors"
       input Types.Vector3D a;
       input Types.Vector3D b;
       output Types.Vector3D c;
@@ -626,7 +688,7 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       c[3] := a[1]*b[2] - a[2]*b[1];
     end cross;
     
-    function dot "Dot product of two 3D vectors"
+    pure function dot "Dot product of two 3D vectors"
       input Types.Vector3D a;
       input Types.Vector3D b;
       output Real result;
@@ -634,14 +696,14 @@ package Frames "Coordinate frame transformations between BODY, ECEF, and ECI usi
       result := a[1]*b[1] + a[2]*b[2] + a[3]*b[3];
     end dot;
     
-    function norm "Euclidean norm of a 3D vector"
+    pure function norm "Euclidean norm of a 3D vector"
       input Types.Vector3D v;
       output Real result;
     algorithm
       result := sqrt(v[1]^2 + v[2]^2 + v[3]^2);
     end norm;
     
-    function skewSymmetric "Create skew-symmetric matrix from vector"
+    pure function skewSymmetric "Create skew-symmetric matrix from vector"
       input Types.Vector3D v;
       output Real[3,3] S;
     algorithm

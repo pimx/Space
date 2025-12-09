@@ -3,6 +3,8 @@ within Flights;
 model ControlLanding
   "Control system for Landing"
   
+  constant Real g0               = Constants.g0          "Standard gravity [m/s^2]";
+
   parameter Real pos0_ECEF[3] = Transformations.pos_WGS_to_ECEF(0,0,0)    "положение начала системы координат NED (старт)";
   
   input Real pos_NED[3](start={0,0,0})       "положение в местной системе координат";
@@ -22,15 +24,15 @@ model ControlLanding
 equation
 
   if time < 100 then
-    for_thrust_BDY = {0, 0,-10.81};
-    for_aero_BDY   = {0, 0,     0};
-    mom_thrust_BDY = {0, 0, 0};
-    mom_aero_BDY   = {0,    0, 0};
+    for_thrust_BDY = {0.00,  0.00,  g0+1};
+    for_aero_BDY   = {0.00,  0.00,   0.00};
+    mom_thrust_BDY = {0.00,  0.00,   0.00};
+    mom_aero_BDY   = {0.00,  0.00,   0.00};
   else
-    for_thrust_BDY = {0,0, -8.81};
-    for_aero_BDY   = {0, 0,    0};
-    mom_thrust_BDY = {0,    0, 0};
-    mom_aero_BDY   = {0,    0, 0};
+    for_thrust_BDY = {0.00,  0.00,  g0-1};
+    for_aero_BDY   = {0.00,  0.00,   0.00};
+    mom_thrust_BDY = {0.00,  0.00,   0.00};
+    mom_aero_BDY   = {0.00,  0.00,   0.00};
   end if;
 
 end ControlLanding;

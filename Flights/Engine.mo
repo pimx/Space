@@ -8,6 +8,9 @@ model Engine "Rocket engine with thrust vectoring"
 	);
 
 
+	constant Real maxThrust     =  2.00 * (Constants.M_dry+Constants.M_fuel) * Constants.g0  "максимальная тяга 169 / SCALE^3 * M_G0 * M_IMPULSE [N]";
+	constant Real minThrust     =  1.15 * Constants.M_dry * Constants.g0  "минимальная  тяга  91 / SCALE^3 * M_G0 * M_IMPULSE [N]";
+
 	// Input from Control
 	input Real requiredDirection[3] "Gimbal angles [rad]";
 	input Real requiredMagnitude "Commanded thrust magnitude [N]";
@@ -27,7 +30,7 @@ model Engine "Rocket engine with thrust vectoring"
   
 equation
 
-	chamber[1].requiredThrottle  = requiredMagnitude / maxThrust;
+	chamber[1].requiredThrottle  = min(requiredMagnitude / maxThrust, 1.0);
 	chamber[1].requiredDirection = requiredDirection;
 	chamber[1].centerPosition    = centerPosition;
 	for i in 2:9 loop

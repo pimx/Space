@@ -14,8 +14,11 @@ package Constants
     constant Real R_earth          = 6378137.0        "WGS84 equatorial radius [m]";
     constant Real f_earth          = 1/298.257223563  "WGS84 flattening";
     constant Real e_earth          = sqrt(2*f_earth - f_earth^2) "WGS84 eccentricity";
-    constant Real g0               = 9.80665          "Standard gravity [m/s^2]";
     constant Real gravity          = g0               "Gravity [m/s²]";
+    constant Real g0               = 9.80665          "Standard gravity [m/s^2]";
+    constant Real J2               = 1.082626683e-3 "Earth J2 coefficient";
+    constant Real flattening       = 1.0/298.257223563 "Earth flattening (WGS84)";
+    constant Real e2               = 2*flattening - flattening^2 "Earth eccentricity squared";
 
     // mass and inertial parameters
     constant Real S_ref            = 7.0              "Reference area [m^2]";
